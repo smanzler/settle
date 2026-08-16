@@ -1,8 +1,8 @@
 import React from "react";
 import { ScrollViewProps } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { BodyScrollView } from "./ui/body-scroll-view";
-import RefetchControl from "./refetch-control";
+import { BodyScrollView } from "@/components/ui/body-scroll-view";
+import { RefetchControl } from "@/components/ui/refetch-control";
 
 type Props = {
   refetch?: () => Promise<unknown>;
@@ -12,14 +12,14 @@ type Props = {
   loading?: React.ReactNode;
 };
 
-export const RefetchScroll = ({
+export function RefetchScroll({
   refetch,
   isEmpty,
   empty,
   isLoading,
   loading,
   ...props
-}: ScrollViewProps & Props) => {
+}: ScrollViewProps & Props) {
   const renderBody = (bodyProps: ScrollViewProps) => (
     <BodyScrollView
       {...bodyProps}
@@ -30,8 +30,10 @@ export const RefetchScroll = ({
   );
 
   const withSafe = (children: React.ReactNode) => (
+    // `style`, not `className`: uniwind only patches the components it
+    // re-exports from `react-native`, and a className here is dropped.
     <SafeAreaView style={{ flex: 1 }} edges={["bottom"]}>
-      {renderBody({ contentContainerClassName: "grow", children })}
+      {renderBody({ children, contentContainerClassName: "grow" })}
     </SafeAreaView>
   );
 
@@ -39,4 +41,4 @@ export const RefetchScroll = ({
   if (isEmpty) return withSafe(empty);
 
   return renderBody(props);
-};
+}

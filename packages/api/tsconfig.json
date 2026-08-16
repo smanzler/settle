@@ -26,7 +26,8 @@
     // "noImplicitOverride": true,
     // "noUnusedLocals": true,
     // "noUnusedParameters": true,
-    // "noFallthroughCasesInSwitch": true,
+    // The exhaustive-switch pattern in STYLE.md depends on this flag.
+    "noFallthroughCasesInSwitch": true,
     // "noPropertyAccessFromIndexSignature": true,
     // Recommended Options
     "strict": true,

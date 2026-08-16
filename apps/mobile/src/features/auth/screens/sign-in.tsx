@@ -3,11 +3,10 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
-import { authClient } from "@/lib/auth-client";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, View } from "react-native";
 import { AuthCard } from "../components/auth-card";
+import { parseAuthError, sendSignInOtp } from "../lib/auth-error";
 
 export function SignIn() {
   const router = useRouter();
@@ -17,26 +16,17 @@ export function SignIn() {
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
-    if (!email) {
-      return;
-    }
+    if (!email || submitting) return;
 
     setSubmitting(true);
     setError(null);
     try {
-      const { error } = await authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: "sign-in",
-      });
-
-      if (error) {
-        throw error;
-      }
+      await sendSignInOtp(email);
 
       router.push({ pathname: "/verify-otp", params: { email } });
     } catch (caught) {
       console.error(caught);
-      const { code, status } = caught as { code?: string; status?: number };
+      const { code, status } = parseAuthError(caught);
       if (code === "INVALID_EMAIL") {
         setError("Please enter a valid email address.");
       } else if (status === 429) {
@@ -50,37 +40,33 @@ export function SignIn() {
   };
 
   return (
-    <KeyboardAvoidingView className="flex-1">
-      <View className="flex-1 flex flex-col justify-center p-6">
-        <AuthCard title="Sign in" description="Enter your email to continue">
-          <FieldGroup>
-            <Field className="gap-1">
-              <FieldLabel>Email</FieldLabel>
-              <Input
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-                value={email}
-                onChangeText={(text) => {
-                  setEmail(text);
-                  setError(null);
-                }}
-              />
-            </Field>
-          </FieldGroup>
+    <AuthCard title="Sign in" description="Enter your email to continue">
+      <FieldGroup>
+        <Field className="gap-1">
+          <FieldLabel>Email</FieldLabel>
+          <Input
+            autoCapitalize="none"
+            keyboardType="email-address"
+            autoComplete="email"
+            value={email}
+            onChangeText={(text) => {
+              setEmail(text);
+              setError(null);
+            }}
+            returnKeyType="go"
+            onSubmitEditing={handleSubmit}
+          />
+        </Field>
+      </FieldGroup>
 
-          {error && (
-            <Text className="text-destructive text-center text-sm">
-              {error}
-            </Text>
-          )}
+      {error && (
+        <Text className="text-destructive text-center text-sm">{error}</Text>
+      )}
 
-          <Button onPress={handleSubmit} disabled={submitting || !email}>
-            {submitting && <Spinner className="text-secondary" />}
-            <Text>Continue</Text>
-          </Button>
-        </AuthCard>
-      </View>
-    </KeyboardAvoidingView>
+      <Button onPress={handleSubmit} disabled={submitting || !email}>
+        {submitting && <Spinner className="text-secondary" />}
+        <Text>Continue</Text>
+      </Button>
+    </AuthCard>
   );
 }

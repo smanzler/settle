@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { Platform, ScrollViewProps } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 
-export const BodyScrollView = (props: ScrollViewProps) => {
+export function BodyScrollView(props: ScrollViewProps) {
   return (
     <ScrollView
       {...props}
@@ -15,6 +15,4 @@ export const BodyScrollView = (props: ScrollViewProps) => {
       )}
     />
   );
-};
-
-BodyScrollView.displayName = "BodyScrollView";
+}

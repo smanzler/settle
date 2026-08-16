@@ -39,9 +39,11 @@
     "expo-server-sdk": "^6.1.0",
     "fastify": "^5.8.5",
     "fastify-type-provider-zod": "^6.1.0",
+    "jose": "^6.2.8",
     "nodemailer": "^9.0.3",
     "pg": "^8.21.0",
     "pg-boss": "^12.26.3",
+    "plaid": "^45.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -38,11 +38,14 @@ export type PushTicketOutcome =
   | { status: "failed"; lastError: string; invalidToken?: boolean };
 
 export const getTicketOutcome = (ticket: ExpoPushTicket): PushTicketOutcome => {
-  if (ticket.status === "ok") return { status: "sent" };
-
-  return {
-    status: "failed",
-    lastError: ticket.message,
-    invalidToken: ticket.details?.error === "DeviceNotRegistered",
-  };
+  switch (ticket.status) {
+    case "ok":
+      return { status: "sent" };
+    case "error":
+      return {
+        status: "failed",
+        lastError: ticket.message,
+        invalidToken: ticket.details?.error === "DeviceNotRegistered",
+      };
+  }
 };

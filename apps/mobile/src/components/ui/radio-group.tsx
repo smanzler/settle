@@ -1,6 +1,8 @@
+import { Label } from "@/components/ui/label";
+import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import * as RadioGroupPrimitive from "@rn-primitives/radio-group";
-import { Platform } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 
 function RadioGroup({
   className,
@@ -34,4 +36,56 @@ function RadioGroupItem({
   );
 }
 
-export { RadioGroup, RadioGroupItem };
+/**
+ * A whole radio row: the dot, a tappable label, and an optional line of
+ * explanation under it.
+ *
+ * The primitive `RadioGroupItem` is only the dot, so every caller was otherwise
+ * repeating the same Pressable-plus-Label-plus-caption scaffold — and getting the
+ * fiddly part wrong is easy, because the label needs its own `onPress` (tapping
+ * text does not reach the row on native) and `nativeID`/`aria-labelledby` have to
+ * agree for the dot to be announced with its name.
+ */
+function RadioGroupOption({
+  value,
+  title,
+  description,
+  className,
+  onSelect,
+}: {
+  value: string;
+  title: string;
+  description?: string;
+  className?: string;
+  onSelect: () => void;
+}) {
+  const nativeID = `radio-option-${value}`;
+
+  return (
+    <Pressable
+      className={cn(
+        description
+          ? "flex-row items-start gap-3"
+          : "flex-row items-center gap-3",
+        className,
+      )}
+      onPress={onSelect}
+    >
+      <RadioGroupItem
+        value={value}
+        aria-labelledby={nativeID}
+        className={description ? "mt-1" : undefined}
+      />
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Label nativeID={nativeID} onPress={onSelect}>
+          {title}
+        </Label>
+        {description ? (
+          <Text className="text-muted-foreground text-xs">{description}</Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+export { RadioGroup, RadioGroupItem, RadioGroupOption };

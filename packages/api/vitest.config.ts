@@ -5,7 +5,13 @@ const testEnv: Record<keyof Env, string> = {
   BETTER_AUTH_SECRET: "test-secret",
   BETTER_AUTH_URL: "https://auth.test",
 
-  DATABASE_URL: "postgres://test:test@localhost:5432/test",
+  // Integration tests (`src/routes/scope.test.ts`, `src/lib/ledger.test.ts`)
+  // exercise procedures through the module-level `db` singleton, which reads
+  // this. Point it at a real database to run them; otherwise it stays a stub
+  // that nothing connects to and those suites skip themselves.
+  DATABASE_URL:
+    process.env.INTEGRATION_DATABASE_URL ??
+    "postgres://test:test@localhost:5432/test",
   PORT: "4000",
   CLIENT_ORIGIN: "http://localhost:3000",
 
@@ -22,14 +28,15 @@ const testEnv: Record<keyof Env, string> = {
   SMTP_PASSWORD: "test-pass",
   SMTP_FROM: "test@example.com",
 
-  GOOGLE_CLIENT_ID: "google-client-id",
-  GOOGLE_CLIENT_SECRET: "google-client-secret",
+  EXPO_ACCESS_TOKEN: "test-expo-access-token",
 
-  APPLE_CLIENT_ID: "apple-client-id",
-  APPLE_TEAM_ID: "apple-team-id",
-  APPLE_KEY_ID: "apple-key-id",
-  APPLE_PRIVATE_KEY: "apple-private-key",
-  APPLE_APP_BUNDLE_IDENTIFIER: "com.test",
+  PLAID_CLIENT_ID: "test-plaid-client-id",
+  PLAID_SECRET: "test-plaid-secret",
+  PLAID_ENV: "sandbox",
+  PLAID_WEBHOOK_URL: "https://api.test/webhooks/plaid",
+
+  ENCRYPTION_KEY:
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
 };
 
 export default defineConfig({

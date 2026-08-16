@@ -29,13 +29,15 @@ function Spinner({ className, ...props }: LucideProps) {
     transform: [{ rotate: `${rotation.value}deg` }],
   }));
 
+  const iconClassName = cn("size-4", className);
+
   return (
-    <Animated.View style={style} className="size-4">
+    <Animated.View style={style} className={iconClassName}>
       <Icon
         as={Loader2Icon}
         role="status"
         aria-label="Loading"
-        className={cn("size-4 animate-spin", className)}
+        className={cn(iconClassName, "animate-spin")}
         {...props}
       />
     </Animated.View>

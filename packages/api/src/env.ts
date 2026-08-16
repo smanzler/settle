@@ -23,6 +23,14 @@ export const envSchema = z.object({
   SMTP_FROM: z.string().default("Budget <noreply@budget.local>"),
 
   EXPO_ACCESS_TOKEN: z.string().optional(),
+
+  PLAID_CLIENT_ID: z.string(),
+  PLAID_SECRET: z.string(),
+  PLAID_ENV: z.enum(["sandbox", "production"]).default("sandbox"),
+  PLAID_WEBHOOK_URL: z.string().optional(),
+
+  // 32 bytes hex — openssl rand -hex 32
+  ENCRYPTION_KEY: z.string().length(64),
 });
 
 export type Env = z.infer<typeof envSchema>;

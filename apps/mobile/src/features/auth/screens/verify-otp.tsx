@@ -4,8 +4,9 @@ import { Text } from "@/components/ui/text";
 import { authClient } from "@/lib/auth-client";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, View } from "react-native";
+import { View } from "react-native";
 import { AuthCard } from "../components/auth-card";
+import { parseAuthError, sendSignInOtp } from "../lib/auth-error";
 import { OtpInput, type OtpInputRef } from "../components/otp-input";
 
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -36,19 +37,17 @@ export function VerifyOtp() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleSubmit = async () => {
-    if (!email || otp.length !== 6) {
-      return;
-    }
+  // `code` is passed explicitly by `onFilled`, which fires in the same tick as
+  // the `onTextChange` that sets `otp` — the state read here would still be stale.
+  const handleSubmit = async (code = otp) => {
+    if (!email || submitting || code.length !== 6) return;
 
     setSubmitting(true);
     setError(null);
     try {
-      const { error } = await authClient.signIn.emailOtp({ email, otp });
+      const { error } = await authClient.signIn.emailOtp({ email, otp: code });
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       // The session-signal update that better-auth fires internally after
       // sign-in is wrapped in a setTimeout, which is unreliable on Android
@@ -57,9 +56,9 @@ export function VerifyOtp() {
       await refetchSession();
     } catch (caught) {
       console.error(caught);
-      const code = (caught as { code?: string })?.code;
+      const { code: errorCode } = parseAuthError(caught);
       setError(
-        (code && OTP_ERROR_MESSAGES[code]) ??
+        (errorCode && OTP_ERROR_MESSAGES[errorCode]) ??
           "Something went wrong. Please try again.",
       );
       setOtp("");
@@ -70,21 +69,12 @@ export function VerifyOtp() {
   };
 
   const handleResend = async () => {
-    if (!email || resendCooldown > 0) {
-      return;
-    }
+    if (!email || resendCooldown > 0) return;
 
     setResending(true);
     setError(null);
     try {
-      const { error } = await authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: "sign-in",
-      });
-
-      if (error) {
-        throw error;
-      }
+      await sendSignInOtp(email);
 
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (error) {
@@ -97,77 +87,72 @@ export function VerifyOtp() {
 
   if (!email) {
     return (
-      <KeyboardAvoidingView className="flex-1">
-        <View className="flex-1 flex flex-col justify-center p-6">
-          <AuthCard
-            title="Something went wrong"
-            description="We couldn't find an email to verify."
-          >
-            <Button onPress={() => router.replace("/")}>
-              <Text>Back to Sign In</Text>
-            </Button>
-          </AuthCard>
-        </View>
-      </KeyboardAvoidingView>
+      <AuthCard
+        title="Something went wrong"
+        description="We couldn't find an email to verify."
+      >
+        <Button onPress={() => router.replace("/")}>
+          <Text>Back to Sign In</Text>
+        </Button>
+      </AuthCard>
     );
   }
 
   return (
-    <KeyboardAvoidingView className="flex-1">
-      <View className="flex-1 flex flex-col justify-center p-6">
-        <AuthCard
-          title="Enter code"
-          description={`We sent a 6-digit code to ${email}`}
+    <AuthCard
+      title="Enter code"
+      description={`We sent a 6-digit code to ${email}`}
+    >
+      <OtpInput
+        ref={otpRef}
+        onTextChange={(text) => {
+          setOtp(text);
+          setError(null);
+        }}
+        onFilled={handleSubmit}
+        textInputProps={{
+          returnKeyType: "go",
+          onSubmitEditing: () => handleSubmit(),
+        }}
+      />
+
+      {error && (
+        <Text className="text-destructive text-center text-sm">{error}</Text>
+      )}
+
+      <Button
+        onPress={() => handleSubmit()}
+        disabled={submitting || otp.length !== 6}
+      >
+        {submitting && <Spinner className="text-secondary" />}
+        <Text>Continue</Text>
+      </Button>
+
+      <View className="mx-auto flex-row">
+        <Text className="text-muted-foreground text-sm">
+          Didn&apos;t get a code?{" "}
+        </Text>
+        <Button
+          variant="link"
+          size="inline"
+          onPress={handleResend}
+          disabled={resending || resendCooldown > 0}
         >
-          <OtpInput
-            ref={otpRef}
-            onTextChange={(text) => {
-              setOtp(text);
-              setError(null);
-            }}
-          />
-
-          {error && (
-            <Text className="text-destructive text-center text-sm">
-              {error}
-            </Text>
-          )}
-
-          <Button
-            onPress={handleSubmit}
-            disabled={submitting || otp.length !== 6}
-          >
-            {submitting && <Spinner className="text-secondary" />}
-            <Text>Continue</Text>
-          </Button>
-
-          <View className="mx-auto flex-row">
-            <Text className="text-muted-foreground text-sm">
-              Didn&apos;t get a code?{" "}
-            </Text>
-            <Button
-              variant="link"
-              className="p-0 py-0 h-fit"
-              onPress={handleResend}
-              disabled={resending || resendCooldown > 0}
-            >
-              <Text className="underline">
-                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend"}
-              </Text>
-            </Button>
-          </View>
-
-          <View className="mx-auto flex-row">
-            <Button
-              variant="link"
-              className="p-0 py-0 h-fit"
-              onPress={() => router.replace("/")}
-            >
-              <Text className="underline">Use a different email</Text>
-            </Button>
-          </View>
-        </AuthCard>
+          <Text className="underline">
+            {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend"}
+          </Text>
+        </Button>
       </View>
-    </KeyboardAvoidingView>
+
+      <View className="mx-auto flex-row">
+        <Button
+          variant="link"
+          size="inline"
+          onPress={() => router.replace("/")}
+        >
+          <Text className="underline">Use a different email</Text>
+        </Button>
+      </View>
+    </AuthCard>
   );
 }

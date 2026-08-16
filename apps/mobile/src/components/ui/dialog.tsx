@@ -1,10 +1,13 @@
+import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { NativeOnlyAnimatedView } from "@/components/ui/native-only-animated-view";
+import { Spinner } from "@/components/ui/spinner";
+import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import * as DialogPrimitive from "@rn-primitives/dialog";
 import { X } from "lucide-react-native";
 import * as React from "react";
-import { Platform, Text, View, type ViewProps } from "react-native";
+import { Platform, View, type ViewProps } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { FullWindowOverlay as RNFullWindowOverlay } from "react-native-screens";
 
@@ -45,6 +48,7 @@ function DialogOverlay({
           exiting={FadeOut.duration(150)}
         >
           <NativeOnlyAnimatedView
+            className="w-full"
             entering={FadeIn.delay(50)}
             exiting={FadeOut.duration(150)}
           >
@@ -55,6 +59,7 @@ function DialogOverlay({
     </FullWindowOverlay>
   );
 }
+
 function DialogContent({
   className,
   portalHost,
@@ -122,6 +127,38 @@ function DialogFooter({ className, ...props }: ViewProps) {
   );
 }
 
+/**
+ * The cancel/confirm pair a sheet closes with.
+ *
+ * `isPending` disables both buttons and puts the spinner on the confirm one;
+ * `disabled` is for the sheet's own "nothing to save yet" condition.
+ */
+function DialogActions({
+  confirmLabel,
+  disabled,
+  isPending,
+  onCancel,
+  onConfirm,
+}: {
+  confirmLabel: string;
+  disabled?: boolean;
+  isPending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <DialogFooter>
+      <Button variant="outline" disabled={isPending} onPress={onCancel}>
+        <Text>Cancel</Text>
+      </Button>
+      <Button disabled={isPending || disabled} onPress={onConfirm}>
+        {isPending ? <Spinner className="text-primary-foreground" /> : null}
+        <Text>{confirmLabel}</Text>
+      </Button>
+    </DialogFooter>
+  );
+}
+
 function DialogTitle({
   className,
   ...props
@@ -152,6 +189,7 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogActions,
   DialogClose,
   DialogContent,
   DialogDescription,

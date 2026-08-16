@@ -55,6 +55,8 @@ const buttonVariants = cva(
           Platform.select({ web: "has-[>svg]:px-4" }),
         ),
         icon: "h-10 w-10 sm:h-9 sm:w-9",
+        /** A link sitting inside a sentence: no box of its own. */
+        inline: "h-fit p-0",
       },
     },
     defaultVariants: {
@@ -92,6 +94,7 @@ const buttonTextVariants = cva(
         sm: "",
         lg: "",
         icon: "",
+        inline: "",
       },
     },
     defaultVariants: {

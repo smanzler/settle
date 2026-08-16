@@ -12,7 +12,7 @@ export const pushTokensRouter = router({
 
       await db
         .insert(PushTokens)
-        .values({ userId: user.id, token })
+        .values({ token, userId: user.id })
         .onConflictDoUpdate({
           target: PushTokens.token,
           set: { userId: user.id },

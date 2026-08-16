@@ -1,0 +1,1 @@
+ALTER TABLE "ledger_entries" DROP CONSTRAINT "ledger_entries_settlement_id_settlements_id_fkey", ADD CONSTRAINT "ledger_entries_settlement_id_settlements_id_fkey" FOREIGN KEY ("settlement_id") REFERENCES "settlements"("id");

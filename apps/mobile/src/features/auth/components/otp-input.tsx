@@ -14,7 +14,7 @@ export const OtpInput = forwardRef<
   Omit<OtpEntryInputProps, "theme">
 >(function OtpInput({ numberOfDigits = 6, ...props }, ref) {
   const { theme } = useUniwind();
-  const colors = THEME[(theme as "light" | "dark") ?? "light"];
+  const colors = THEME[theme];
 
   return (
     <OtpEntryInput

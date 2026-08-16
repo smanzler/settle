@@ -23,6 +23,43 @@ docker/         Local Postgres, pgAdmin and Mailpit
   push token on launch.
 - **File uploads** — `files.createUpload` / `files.confirmUpload` hand out
   presigned S3 URLs so clients upload straight to the bucket.
+- **Split & settle** — every transaction is attributed to one or more
+  **household members**, and the app tracks who owes the person whose card
+  actually moved. See below.
+
+## Households, splits and the ledger
+
+Everything is scoped to a **household**. A household has **members** — seats,
+not users, so you can split a bill with someone before they install the app.
+Each bank account has an owner member: the creditor.
+
+Two separate ideas, and keeping them apart is the whole design:
+
+- `transaction_splits` is **intent** — `(member, weight, amount_cents)` rows
+  that sum exactly to the transaction amount, in Plaid's sign convention. This
+  is what the split editor writes.
+- `ledger_entries` is **truth** — append-only, signed, pairwise
+  `(debtor, creditor, amount_cents)` rows keyed by a stable `external_ref`.
+  Balances are a `SUM` over it, derived on read; nothing is materialized.
+
+One function, `postShareDeltas` in `lib/ledger.ts`, diffs what the splits say
+against what is already posted and appends only the difference. A new
+transaction, an edited split, a Plaid amount change, a transaction moving
+accounts, and a Plaid deletion are all the same call — and calling it twice
+writes nothing.
+
+Because splits carry Plaid's sign, a refund is just a negative split and the
+debt reverses itself; there is no second rule for refunds. Rounding goes through
+`allocate` in `packages/shared/src/money.ts` (largest-remainder, exact,
+sign-symmetric), which lives in `shared` so the editor previews the exact cents
+the server will store.
+
+`balances.verify` recomputes the target from the splits and reports any ref the
+entries disagree with — the projection is only correct if no `postShareDeltas`
+call was ever missed, so drift is detectable rather than silent.
+
+A single user never sees any of this: the household exists from signup, but
+every household surface is gated on having more than one member.
 
 ## Local setup
 
@@ -77,3 +114,20 @@ Things that can't be inherited from the template — do these once per project:
 
 `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm check` (prettier) — all run
 across every workspace.
+
+### Integration tests
+
+`packages/api/src/lib/ledger.test.ts` and `src/routes/scope.test.ts` exercise
+real SQL — a full outer join, an append-only reconcile, and the `WHERE` clauses
+that keep one household out of another's data. A mock would only test the mock,
+so they need a live database and skip themselves without one:
+
+```
+INTEGRATION_DATABASE_URL=postgresql://budget:<pw>@localhost:5432/budget \
+  pnpm --filter @budget/api test
+```
+
+The ledger tests run inside a transaction that is always rolled back. The scope
+tests cannot (they go through the `db` singleton, which would not see
+uncommitted rows), so they create run-stamped users and delete exactly those in
+`afterAll`. Point them at a scratch database if that makes you nervous.

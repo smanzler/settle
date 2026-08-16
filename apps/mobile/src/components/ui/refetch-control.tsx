@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { RefreshControl, RefreshControlProps } from "react-native";
 
-export default function RefetchControl({
+export function RefetchControl({
   refetch,
   ...props
 }: {

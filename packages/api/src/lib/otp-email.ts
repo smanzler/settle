@@ -4,7 +4,7 @@ const ICON_BASE64 = readFileSync(
   new URL(import.meta.resolve("@budget/shared/assets/images/icon-email.png")),
 ).toString("base64");
 
-export function renderOtpEmail({
+export const renderOtpEmail = ({
   otp,
   heading,
   expiresInMinutes,
@@ -12,7 +12,7 @@ export function renderOtpEmail({
   otp: string;
   heading: string;
   expiresInMinutes: number;
-}) {
+}) => {
   const html = `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background-color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
@@ -60,4 +60,4 @@ export function renderOtpEmail({
   const text = `${heading}\n\nYour code is ${otp}. It expires in ${expiresInMinutes} minutes.\n\nIf you didn't request this code, you can safely ignore this email.`;
 
   return { html, text };
-}
+};

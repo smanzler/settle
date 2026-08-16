@@ -6,7 +6,7 @@ import { Platform, View, ViewProps } from "react-native";
 
 const badgeVariants = cva(
   cn(
-    "border-border group shrink-0 flex-row items-center justify-center gap-1 overflow-hidden rounded-full border px-2 py-0.5",
+    "border-border group shrink-0 flex-row items-center justify-center gap-1 overflow-hidden rounded-full border",
     Platform.select({
       web: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive w-fit whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] [&>svg]:pointer-events-none [&>svg]:size-3",
     }),
@@ -30,14 +30,20 @@ const badgeVariants = cva(
           web: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         }),
       },
+      size: {
+        default: "px-2 py-0.5",
+        /** The chip that rides inside a subtitle line. */
+        sm: "px-1.5 py-0",
+      },
     },
     defaultVariants: {
+      size: "default",
       variant: "default",
     },
   },
 );
 
-const badgeTextVariants = cva("text-xs font-medium", {
+const badgeTextVariants = cva("font-medium", {
   variants: {
     variant: {
       default: "text-primary-foreground",
@@ -45,8 +51,13 @@ const badgeTextVariants = cva("text-xs font-medium", {
       destructive: "text-white",
       outline: "text-foreground",
     },
+    size: {
+      default: "text-xs",
+      sm: "text-[10px]",
+    },
   },
   defaultVariants: {
+    size: "default",
     variant: "default",
   },
 });
@@ -56,12 +67,12 @@ type BadgeProps = ViewProps &
     asChild?: boolean;
   } & VariantProps<typeof badgeVariants>;
 
-function Badge({ className, variant, asChild, ...props }: BadgeProps) {
+function Badge({ className, variant, size, asChild, ...props }: BadgeProps) {
   const Component = asChild ? Slot.View : View;
   return (
-    <TextClassContext.Provider value={badgeTextVariants({ variant })}>
+    <TextClassContext.Provider value={badgeTextVariants({ variant, size })}>
       <Component
-        className={cn(badgeVariants({ variant }), className)}
+        className={cn(badgeVariants({ variant, size }), className)}
         {...props}
       />
     </TextClassContext.Provider>

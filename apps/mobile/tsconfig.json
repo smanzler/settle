@@ -3,6 +3,8 @@
   "compilerOptions": {
     "types": ["jest"],
     "strict": true,
+    // The exhaustive-switch pattern in STYLE.md depends on this flag.
+    "noFallthroughCasesInSwitch": true,
     "paths": {
       "@/*": ["./src/*"]
     }

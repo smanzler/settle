@@ -12,12 +12,22 @@ import { expo, buildPushMessage, getTicketOutcome } from "./expo";
 
 export const boss = new PgBoss(env.DATABASE_URL);
 await boss.start();
-await boss.createQueue("notify.mobile", {
-  retryLimit: 5,
+
+/** The retry policy every queue in the app uses. */
+export const QUEUE_RETRY = {
   retryBackoff: true,
   retryDelay: 1,
   retryDelayMax: 300,
-});
+  retryLimit: 5,
+};
+
+await boss.createQueue("notify.mobile", QUEUE_RETRY);
+
+/**
+ * `notifications.data` is `jsonb`, which Drizzle types as `unknown`. Every writer
+ * goes through `notify`, which puts a payload variant's `data` object there.
+ */
+const pushDataSchema = z.record(z.string(), z.unknown()).nullable();
 
 boss.work("notify.mobile", async ([job]) => {
   const { deliveryId } = z.object({ deliveryId: z.uuid() }).parse(job?.data);
@@ -35,17 +45,20 @@ boss.work("notify.mobile", async ([job]) => {
 
   const delivery = result.notification_deliveries;
   const { title, body, data } = result.notifications;
+  const { deviceToken } = delivery;
 
-  const message = delivery.deviceToken
+  const message = deviceToken
     ? buildPushMessage({
-        token: delivery.deviceToken,
+        token: deviceToken,
         title,
         body,
-        data: data as Record<string, unknown> | null,
+        data: pushDataSchema.parse(data),
       })
     : null;
 
-  if (!message) {
+  // A null token already gives a null message. Testing it again is what narrows
+  // `deviceToken` to a string for the token delete below.
+  if (!deviceToken || !message) {
     await db
       .update(NotificationDeliveries)
       .set({
@@ -74,9 +87,7 @@ boss.work("notify.mobile", async ([job]) => {
       .where(eq(NotificationDeliveries.id, deliveryId));
 
     if (outcome.status === "failed" && outcome.invalidToken) {
-      await db
-        .delete(PushTokens)
-        .where(eq(PushTokens.token, delivery.deviceToken!));
+      await db.delete(PushTokens).where(eq(PushTokens.token, deviceToken));
     }
   } catch (err) {
     await db

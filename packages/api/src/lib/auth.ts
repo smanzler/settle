@@ -6,19 +6,9 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { expo } from "@better-auth/expo";
 import { emailOTP } from "better-auth/plugins";
 import * as schema from "../db/auth-schema";
-import { createTransport } from "nodemailer";
-import { env } from "../env";
+import { ensureHousehold } from "./household";
+import { sendEmail } from "./mailer";
 import { renderOtpEmail } from "./otp-email";
-
-const mailer = createTransport({
-  host: env.SMTP_HOST,
-  port: env.SMTP_PORT,
-  secure: env.SMTP_SECURE,
-  auth:
-    env.SMTP_USER && env.SMTP_PASSWORD
-      ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD }
-      : undefined,
-});
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -39,22 +29,33 @@ export const auth = betterAuth({
           expiresInMinutes: 5,
         });
 
-        await mailer.sendMail({
-          from: env.SMTP_FROM,
-          to: email,
-          subject,
-          html,
-          text,
-        });
+        await sendEmail({ to: email, subject, html, text });
       },
     }),
   ],
-  trustedOrigins: ["com.sigh10.budget://"],
-  advanced: {
-    database: {
-      generateId: "uuid",
+  databaseHooks: {
+    user: {
+      create: {
+        /**
+         * Give every new user a household immediately, so the very first
+         * request already has a member seat to act as.
+         *
+         * Deliberately non-fatal: a failure here must not block sign-up, and
+         * `householdProcedure` bootstraps lazily anyway. This hook exists so
+         * the common path does not pay for it on first request.
+         */
+        after: async (user) => {
+          try {
+            await ensureHousehold(user);
+          } catch (err) {
+            console.error("failed to bootstrap household on signup:", err);
+          }
+        },
+      },
     },
   },
+  trustedOrigins: ["com.sigh10.budget://"],
+  advanced: { database: { generateId: "uuid" } },
 });
 
 declare module "fastify" {

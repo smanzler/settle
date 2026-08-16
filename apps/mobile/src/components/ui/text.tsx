@@ -57,8 +57,10 @@ const ROLE: Partial<Record<TextVariant, Role>> = {
   h2: "heading",
   h3: "heading",
   h4: "heading",
-  blockquote: Platform.select({ web: "blockquote" as Role }),
-  code: Platform.select({ web: "code" as Role }),
+  // @ts-expect-error web-only roles, absent from React Native's `Role` union
+  blockquote: Platform.select({ web: "blockquote" }),
+  // @ts-expect-error web-only roles, absent from React Native's `Role` union
+  code: Platform.select({ web: "code" }),
 };
 
 const ARIA_LEVEL: Partial<Record<TextVariant, string>> = {

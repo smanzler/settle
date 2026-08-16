@@ -91,14 +91,9 @@ function FieldSeparator({
 }) {
   return (
     <View className={cn("relative h-5", className)} {...props}>
-      <Separator
-        style={{ position: "absolute", top: "50%", left: 0, right: 0 }}
-      />
+      <Separator className="absolute top-1/2 right-0 left-0" />
       {children && (
-        <Text
-          className="bg-background text-muted-foreground relative mx-auto px-2"
-          style={{ alignSelf: "center" }}
-        >
+        <Text className="bg-background text-muted-foreground relative mx-auto self-center px-2">
           {children}
         </Text>
       )}
@@ -115,21 +110,14 @@ function FieldError({
   errors?: { message?: string }[] | undefined;
 }) {
   const content = useMemo(() => {
-    if (children) {
-      return children;
-    }
-
-    if (!errors?.length) {
-      return null;
-    }
+    if (children) return children;
+    if (!errors?.length) return null;
 
     const uniqueErrors = [
       ...new Map(errors.map((error) => [error?.message, error])).values(),
     ];
 
-    if (uniqueErrors?.length === 1) {
-      return uniqueErrors[0]?.message;
-    }
+    if (uniqueErrors.length === 1) return uniqueErrors[0]?.message;
 
     return (
       <View className="ml-4 flex flex-col gap-1">
@@ -141,9 +129,7 @@ function FieldError({
     );
   }, [children, errors]);
 
-  if (!content) {
-    return null;
-  }
+  if (!content) return null;
 
   return (
     <Text

@@ -20,7 +20,7 @@ import { SafeAreaListener } from "react-native-safe-area-context";
 import { Uniwind, useUniwind } from "uniwind";
 import { QueryProvider } from "@/providers/query-provider";
 
-const RootLayout = () => {
+export default function RootLayout() {
   const { theme } = useUniwind();
 
   return (
@@ -30,10 +30,10 @@ const RootLayout = () => {
       }}
     >
       <QueryProvider>
+        {/* `style`, not `className`: uniwind only patches the components it
+            re-exports from `react-native`, and a className here is dropped. */}
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <ThemeProvider
-            value={NAV_THEME[(theme as "light" | "dark") ?? "light"]}
-          >
+          <ThemeProvider value={NAV_THEME[theme]}>
             <RootLayoutNav />
             <AuthOverlay />
             <PortalHost />
@@ -42,7 +42,7 @@ const RootLayout = () => {
       </QueryProvider>
     </SafeAreaListener>
   );
-};
+}
 
 function RootLayoutNav() {
   const { data: session } = authClient.useSession();
@@ -90,5 +90,3 @@ function AuthOverlay() {
 
   return null;
 }
-
-export default RootLayout;
