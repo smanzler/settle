@@ -1,26 +1,6 @@
 import type { AppRouter } from "@budget/api";
 import { isTRPCClientError } from "@trpc/client";
 
-const WRITE_OFF_INSTRUCTION = "Write the balance off";
-
-/**
- * The sentence `groups.removeMember` and `groups.leave` refuse with while the
- * seat still has a balance, or `null` for every other failure.
- *
- * The code alone can't decide this: PRECONDITION_FAILED also covers "a group
- * must keep at least one owner" and a currency that is already fixed, and no
- * write-off repairs those. The trailing instruction is dropped — the dialog's
- * own button says it better.
- */
-export const outstandingBalanceRefusal = (error: unknown): string | null => {
-  if (!isTRPCClientError<AppRouter>(error)) return null;
-  if (error.data?.code !== "PRECONDITION_FAILED") return null;
-
-  const at = error.message.indexOf(WRITE_OFF_INSTRUCTION);
-
-  return at === -1 ? null : error.message.slice(0, at).trim();
-};
-
 const JOIN_ERRORS: Record<string, string> = {
   BAD_REQUEST: "This invite has expired. Ask them to send you a new one.",
   FORBIDDEN:

@@ -49,10 +49,6 @@ export const useDeleteExpense = () => {
         await Promise.all([
           queryClient.invalidateQueries(trpc.expenses.pathFilter()),
           queryClient.invalidateQueries(trpc.balances.pathFilter()),
-          // Deleting reverses entries but never removes them, so
-          // `currencyLocked` on `groups.get` stays true — refetch it rather
-          // than leave the client guessing which way it went.
-          queryClient.invalidateQueries(trpc.groups.get.pathFilter()),
         ]);
       },
     }),

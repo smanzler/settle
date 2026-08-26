@@ -4,6 +4,7 @@ import db from "../../db";
 import { dropScratchGroups } from "../../db/scratch";
 import { GroupMembers, users } from "../../db/schema";
 import { ensureGroup } from "../../lib/group";
+import { getGroupImbalance } from "../../lib/ledger";
 import { appRouter } from "../index";
 
 /**
@@ -143,7 +144,7 @@ describeDb("settlements.create", () => {
     // positive means the group owes you, and paying somebody reduces what you
     // are owed.
     expect(await netOf(ownerMemberId)).toBe(before + 1000);
-    expect(await owner.balances.verify()).toEqual({ drift: [], imbalance: 0 });
+    expect(await getGroupImbalance(groupId)).toBe(0);
   });
 });
 
@@ -166,7 +167,7 @@ describeDb("settlements.void", () => {
 
     expect(voided?.voidedAt).not.toBeNull();
     expect(await netOf(ownerMemberId)).toBe(before);
-    expect(await owner.balances.verify()).toEqual({ drift: [], imbalance: 0 });
+    expect(await getGroupImbalance(groupId)).toBe(0);
   });
 
   it("refuses to void the same payment twice", async () => {

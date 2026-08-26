@@ -17,10 +17,6 @@ export const useSaveExpense = () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.expenses.pathFilter()),
       queryClient.invalidateQueries(trpc.balances.pathFilter()),
-      // `groups.get` too: it carries `currencyLocked`, which flips the moment
-      // the first entry is posted. Without this the currency picker stays open
-      // and offers a save the server now refuses.
-      queryClient.invalidateQueries(trpc.groups.get.pathFilter()),
     ]);
   };
 

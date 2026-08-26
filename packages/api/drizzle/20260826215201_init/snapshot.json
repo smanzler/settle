@@ -1,8 +1,8 @@
 {
-  "id": "2a5c366d-7c5e-4d71-8a47-1fd5aeeae6db",
-  "prevIds": ["e1169c89-6106-4976-87a4-81574b003108"],
   "version": "8",
   "dialect": "postgres",
+  "id": "2665379a-63e2-421c-9160-68cc51f32d4b",
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
   "ddl": [
     {
       "values": ["email", "mobile"],
@@ -801,19 +801,6 @@
       "generated": null,
       "identity": null,
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "groups"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "archived_at",
       "entityType": "columns",
       "schema": "public",
       "table": "groups"

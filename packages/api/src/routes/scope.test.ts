@@ -4,6 +4,7 @@ import db from "../db";
 import { dropScratchGroups } from "../db/scratch";
 import { users } from "../db/schema";
 import { ensureGroup } from "../lib/group";
+import { getGroupImbalance } from "../lib/ledger";
 import { appRouter } from "./index";
 
 /**
@@ -172,8 +173,8 @@ describeDb("group scope", () => {
   });
 
   it("keeps each group's ledger internally consistent", async () => {
-    for (const api of [alice.api, bob.api]) {
-      expect(await api.balances.verify()).toEqual({ drift: [], imbalance: 0 });
+    for (const group of [alice.group, bob.group]) {
+      expect(await getGroupImbalance(group.id)).toBe(0);
     }
   });
 });

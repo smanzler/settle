@@ -11,19 +11,6 @@ import type { Tx } from "./ledger";
  */
 export const toNormalizedEmail = (email: string) => email.trim().toLowerCase();
 
-/**
- * Whether the group has ever posted to the ledger — the test that locks its
- * currency, because nothing in the app re-denominates a posted entry.
- */
-export const hasPostedEntries = async (groupId: string) => {
-  const posted = await db.query.LedgerEntries.findFirst({
-    where: { groupId },
-    columns: { id: true },
-  });
-
-  return posted !== undefined;
-};
-
 /** The seat a request acts as. Resolved from the session, never from input. */
 export type Member = typeof GroupMembers.$inferSelect;
 
@@ -49,11 +36,21 @@ type NewUser = { id: string; name?: string | null; email: string };
  */
 export const createGroup = async (
   tx: Tx,
-  args: { createdByUserId: string; displayName: string; name: string },
+  args: {
+    createdByUserId: string;
+    displayName: string;
+    /** Fixed for the life of the group. Defaults to the column default. */
+    isoCurrencyCode?: string | undefined;
+    name: string;
+  },
 ): Promise<Member> => {
   const [group] = await tx
     .insert(Groups)
-    .values({ createdByUserId: args.createdByUserId, name: args.name })
+    .values({
+      createdByUserId: args.createdByUserId,
+      isoCurrencyCode: args.isoCurrencyCode,
+      name: args.name,
+    })
     .returning({ id: Groups.id });
 
   if (!group) throw new Error(`failed to create a group named ${args.name}`);

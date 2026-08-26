@@ -83,8 +83,7 @@ CREATE TABLE "groups" (
 	"name" text NOT NULL,
 	"created_by_user_id" uuid,
 	"iso_currency_code" text DEFAULT 'USD' NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"archived_at" timestamp with time zone
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "ledger_entries" (

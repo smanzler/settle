@@ -7,9 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { groupNameSchema } from "@budget/shared";
+import { currencySchema, groupNameSchema } from "@budget/shared";
 import { useState } from "react";
 import { useCreateGroup } from "../hooks/use-group";
 
@@ -29,23 +29,29 @@ export function CreateGroupSheet({
 }) {
   const createGroup = useCreateGroup();
   const [name, setName] = useState("");
+  const [currency, setCurrency] = useState("USD");
 
   const parsed = groupNameSchema.safeParse(name);
+  const parsedCurrency = currencySchema.safeParse(currency);
 
   const handleOpenChange = (next: boolean) => {
     if (!next) {
       createGroup.reset();
       setName("");
+      setCurrency("USD");
     }
 
     onOpenChange(next);
   };
 
   const handleCreate = async () => {
-    if (!parsed.success) return;
+    if (!parsed.success || !parsedCurrency.success) return;
 
     try {
-      await createGroup.mutateAsync({ name: parsed.data });
+      await createGroup.mutateAsync({
+        currency: parsedCurrency.data,
+        name: parsed.data,
+      });
       handleOpenChange(false);
     } catch (caught) {
       console.error(caught);
@@ -75,6 +81,22 @@ export function CreateGroupSheet({
           />
         </Field>
 
+        <Field className="gap-1">
+          <FieldLabel>Currency</FieldLabel>
+          <Input
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={3}
+            value={currency}
+            onChangeText={setCurrency}
+            placeholder="USD"
+          />
+          <FieldDescription>
+            Every expense and repayment is in this. Nothing converts, so it is
+            fixed once the group exists.
+          </FieldDescription>
+        </Field>
+
         <ApiError
           error={createGroup.error}
           fallback="Couldn't create the group. Try again."
@@ -82,7 +104,7 @@ export function CreateGroupSheet({
 
         <DialogActions
           confirmLabel="Create group"
-          disabled={!parsed.success}
+          disabled={!parsed.success || !parsedCurrency.success}
           isPending={createGroup.isPending}
           onCancel={() => handleOpenChange(false)}
           onConfirm={() => void handleCreate()}

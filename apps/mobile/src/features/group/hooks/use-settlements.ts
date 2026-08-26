@@ -57,9 +57,6 @@ export const useRecordSettlement = () => {
         await Promise.all([
           queryClient.invalidateQueries(trpc.balances.pathFilter()),
           queryClient.invalidateQueries(trpc.settlements.pathFilter()),
-          // A settlement posts entries, so `currencyLocked` on `groups.get`
-          // flips with the first one.
-          queryClient.invalidateQueries(trpc.groups.get.pathFilter()),
         ]);
       },
     }),

@@ -3,14 +3,12 @@ import { env } from "../env";
 import { z } from "zod";
 import db from "../db";
 import {
-  Groups,
   NotificationDeliveries,
   Notifications,
   PushTokens,
 } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { expo, buildPushMessage, getTicketOutcome } from "./expo";
-import { getGroupImbalance, verifyLedger } from "./ledger";
 
 export const boss = new PgBoss(env.DATABASE_URL);
 await boss.start();
@@ -102,39 +100,5 @@ boss.work("notify.mobile", async ([job]) => {
       .where(eq(NotificationDeliveries.id, deliveryId));
 
     throw err;
-  }
-});
-
-/**
- * The nightly canary for the zero-sum invariant.
- *
- * Every group's ledger sums to zero at every instant, so anything else means a
- * post or a reversal was missed and somebody's balance is quietly wrong. The
- * write paths already assert this before they commit; this is what catches the
- * case where nothing ever ran at all — a crashed job, a hand-written statement,
- * a bug in a path nobody exercised.
- *
- * Logs rather than pages: there is no alerting channel yet, and the platform's
- * log drain is what a human actually reads. `balances.verify` is the same check
- * on demand, for one group.
- */
-await boss.createQueue("ledger.verify", QUEUE_RETRY);
-
-await boss.schedule("ledger.verify", "0 4 * * *");
-
-boss.work("ledger.verify", async () => {
-  const groups = await db.select({ id: Groups.id }).from(Groups);
-
-  for (const group of groups) {
-    const imbalance = await getGroupImbalance(group.id);
-    const drift = await verifyLedger(group.id);
-
-    if (imbalance !== 0 || drift.length > 0) {
-      console.error("ledger integrity check failed", {
-        drift,
-        groupId: group.id,
-        imbalance,
-      });
-    }
   }
 });

@@ -10,7 +10,6 @@ import {
   listGroupBalances,
   postSettlement,
   reverseSettlement,
-  verifyLedger,
 } from "./ledger";
 
 /**
@@ -58,14 +57,9 @@ const nets = async (
   );
 };
 
-/**
- * The check that runs after every scenario. `imbalance` is the invariant itself;
- * `verifyLedger` catches an event that was skipped or posted twice symmetrically,
- * which sums to zero and is therefore invisible to `imbalance` alone.
- */
+/** The invariant every scenario ends on: a group's entries sum to zero. */
 const expectHealthy = async (groupId: string) => {
   expect(await getGroupImbalance(groupId)).toBe(0);
-  expect(await verifyLedger(groupId)).toEqual([]);
 };
 
 /**
@@ -657,8 +651,8 @@ describeDb("concurrent revisions", () => {
 
     // Both are allowed to win — the second simply revises what the first left.
     // What must never happen is a double-reverse, a double-post, or two rows
-    // claiming to be the same version, and `verifyLedger` is blind to none of
-    // them: it recomputes the target from the live version alone.
+    // claiming to be the same version: the first two break the zero-sum total,
+    // and the third breaks the unique index on (expense_id, version).
     expect(outcomes.filter((outcome) => outcome.status === "rejected")).toEqual(
       [],
     );

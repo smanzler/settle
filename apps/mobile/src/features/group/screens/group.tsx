@@ -28,13 +28,9 @@ import { Text } from "@/components/ui/text";
 import { formatApiError } from "@/lib/errors";
 import { groupNameSchema } from "@budget/shared";
 import { Link, useRouter } from "expo-router";
-import { Coins, HandCoins, UsersRound } from "lucide-react-native";
+import { HandCoins, UsersRound } from "lucide-react-native";
 import { useState } from "react";
 import { CreateGroupSheet } from "../components/create-group-sheet";
-import {
-  CurrencySheet,
-  formatCurrencyLabel,
-} from "../components/currency-sheet";
 import { GroupSwitcher } from "../components/group-switcher";
 import { InviteSheet } from "../components/invite-sheet";
 import { MemberList } from "../components/member-list";
@@ -47,18 +43,6 @@ import {
   useTransferOwnership,
   type Member,
 } from "../hooks/use-group";
-import { outstandingBalanceRefusal } from "../lib/errors";
-
-/**
- * What a write-off actually does, in both dialogs that offer one.
- *
- * The server does not delete the debt: it records settlements that square the
- * seat, so the balance goes to zero the same way a real repayment takes it
- * there. Saying so is the difference between "we cancelled it" and "we recorded
- * payments nobody made".
- */
-const WRITE_OFF_EXPLANATION =
-  "Writing it off records payments that square the balance. They show up on Payments like any other repayment, and nobody is owed anything afterwards.";
 
 export function Group() {
   const group = useGroup();
@@ -69,7 +53,6 @@ export function Group() {
   const router = useRouter();
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [currencyOpen, setCurrencyOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -79,28 +62,19 @@ export function Group() {
   const [pendingOwner, setPendingOwner] = useState<Member | null>(null);
   const [leaving, setLeaving] = useState(false);
 
-  // The server's own sentence naming what the seat still owes. Set only once it
-  // has refused, so a null here means "no refusal yet", not "nothing owed".
-  const [outstanding, setOutstanding] = useState<string | null>(null);
-  const [leaveOutstanding, setLeaveOutstanding] = useState<string | null>(null);
-
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [ownerError, setOwnerError] = useState<string | null>(null);
   const [leaveError, setLeaveError] = useState<string | null>(null);
 
-  const currency = group.data?.isoCurrencyCode ?? "USD";
-  const canSetCurrency = group.isOwner && group.data?.currencyLocked !== true;
   const parsedName = groupNameSchema.safeParse(name);
 
   const closeRemove = () => {
     setPending(null);
-    setOutstanding(null);
     setRemoveError(null);
   };
 
   const closeLeave = () => {
     setLeaving(false);
-    setLeaveOutstanding(null);
     setLeaveError(null);
   };
 
@@ -120,26 +94,18 @@ export function Group() {
     }
   };
 
-  const handleRemove = async (writeOffBalance: boolean) => {
+  const handleRemove = async () => {
     if (!pending) return;
 
     setRemoveError(null);
 
     try {
-      await removeMember.mutateAsync({ memberId: pending.id, writeOffBalance });
-
+      await removeMember.mutateAsync({ memberId: pending.id });
       closeRemove();
     } catch (caught) {
-      const refusal = outstandingBalanceRefusal(caught);
-
-      // Not a failure yet — they hold a balance, so the same removal is offered
-      // again with the write-off attached.
-      if (refusal) {
-        setOutstanding(refusal);
-        return;
-      }
-
       console.error(caught);
+      // Includes the refusal naming what they still owe, which is a whole
+      // sentence from the server and better copy than anything written here.
       setRemoveError(
         formatApiError(caught, "Couldn't remove them. Try again."),
       );
@@ -162,27 +128,20 @@ export function Group() {
     }
   };
 
-  const handleLeave = async (writeOffBalance: boolean) => {
+  const handleLeave = async () => {
     setLeaveError(null);
 
     try {
-      await leave.mutateAsync({ writeOffBalance });
+      await leave.mutateAsync();
 
       closeLeave();
       // `replace`, not `push`: this screen was answering for a group the account
       // is no longer in, and the session has already fallen back to another one.
       router.replace("/");
     } catch (caught) {
-      const refusal = outstandingBalanceRefusal(caught);
-
-      // Not a failure yet — the same departure is offered again, with the
-      // write-off attached.
-      if (refusal) {
-        setLeaveOutstanding(refusal);
-        return;
-      }
-
       console.error(caught);
+      // Includes the refusal naming what you still owe — a whole sentence from
+      // the server, and better copy than anything written here.
       setLeaveError(formatApiError(caught, "Couldn't leave. Try again."));
     }
   };
@@ -242,7 +201,6 @@ export function Group() {
 
           <MemberList
             onRemove={(member) => {
-              setOutstanding(null);
               setRemoveError(null);
               setPending(member);
             }}
@@ -258,46 +216,10 @@ export function Group() {
 
         <Section>
           <SectionHeader>
-            <SectionTitle>Currency</SectionTitle>
-            <SectionDescription>
-              {group.data?.currencyLocked === true
-                ? "Fixed now that this group has balances. Nothing converts, so a change would re-denominate what you already owe each other."
-                : group.isOwner
-                  ? "Every expense and repayment is in this currency. Set it before the first expense lands."
-                  : "Every expense and repayment is in this currency. Only an owner can change it."}
-            </SectionDescription>
-          </SectionHeader>
-
-          <SectionContent>
-            <SectionItem
-              // No handler at all when it cannot change: a row that opens a
-              // picker whose Save is guaranteed to be refused is worse than a
-              // row that reads as settled.
-              onPress={canSetCurrency ? () => setCurrencyOpen(true) : undefined}
-            >
-              <Icon as={Coins} className="text-foreground size-4" />
-              <Text className="font-medium">{currency}</Text>
-              <SectionItemContent>
-                {canSetCurrency ? (
-                  formatCurrencyLabel(currency)
-                ) : (
-                  // An element, not the string: the string form draws a
-                  // chevron, and this row leads nowhere.
-                  <Text className="text-muted-foreground">
-                    {formatCurrencyLabel(currency)}
-                  </Text>
-                )}
-              </SectionItemContent>
-            </SectionItem>
-          </SectionContent>
-        </Section>
-
-        <Section>
-          <SectionHeader>
             <SectionTitle>Payments</SectionTitle>
             <SectionDescription>
-              Every repayment between members, including anything written off,
-              and the only place to take one back.
+              Every repayment between members, and the only place to take one
+              back.
             </SectionDescription>
           </SectionHeader>
 
@@ -331,7 +253,6 @@ export function Group() {
             disabled={leave.isPending}
             onPress={() => {
               setLeaveError(null);
-              setLeaveOutstanding(null);
               setLeaving(true);
             }}
           >
@@ -345,14 +266,6 @@ export function Group() {
       <InviteSheet open={inviteOpen} onOpenChange={setInviteOpen} />
 
       <CreateGroupSheet open={createOpen} onOpenChange={setCreateOpen} />
-
-      {/* Keyed on the saved currency so reopening after a save seeds from what
-          was saved rather than from the selection that produced it. */}
-      <CurrencySheet
-        key={currency}
-        open={currencyOpen}
-        onOpenChange={setCurrencyOpen}
-      />
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
@@ -435,15 +348,11 @@ export function Group() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {leaveOutstanding
-                ? "Write off your balance and leave?"
-                : "Leave this group?"}
-            </DialogTitle>
+            <DialogTitle>Leave this group?</DialogTitle>
             <DialogDescription>
-              {leaveOutstanding
-                ? `${leaveOutstanding} ${WRITE_OFF_EXPLANATION}`
-                : "You stop seeing its expenses, members and balances. Your share of past expenses stays on the ledger."}
+              You stop seeing its expenses, members and balances. Your share of
+              past expenses stays on the ledger. You have to be settled up
+              first.
             </DialogDescription>
           </DialogHeader>
 
@@ -462,12 +371,10 @@ export function Group() {
             <Button
               variant="destructive"
               disabled={leave.isPending}
-              // Re-sends the same request with the write-off attached, which is
-              // the only thing the server was waiting for.
-              onPress={() => void handleLeave(leaveOutstanding !== null)}
+              onPress={() => void handleLeave()}
             >
               {leave.isPending ? <Spinner className="text-white" /> : null}
-              <Text>{leaveOutstanding ? "Write off & leave" : "Leave"}</Text>
+              <Text>Leave</Text>
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -481,15 +388,10 @@ export function Group() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {outstanding
-                ? `Write off ${pending?.displayName}'s balance?`
-                : `Remove ${pending?.displayName}?`}
-            </DialogTitle>
+            <DialogTitle>Remove {pending?.displayName}?</DialogTitle>
             <DialogDescription>
-              {outstanding
-                ? `${outstanding} ${WRITE_OFF_EXPLANATION}`
-                : "They lose access to this group. Their share of past expenses stays on the ledger."}
+              They lose access to this group. Their share of past expenses stays
+              on the ledger. They have to be settled up first.
             </DialogDescription>
           </DialogHeader>
 
@@ -508,13 +410,12 @@ export function Group() {
             <Button
               variant="destructive"
               disabled={removeMember.isPending}
-              // Re-sends the same removal with the write-off attached.
-              onPress={() => void handleRemove(outstanding !== null)}
+              onPress={() => void handleRemove()}
             >
               {removeMember.isPending ? (
                 <Spinner className="text-white" />
               ) : null}
-              <Text>{outstanding ? "Write off & remove" : "Remove"}</Text>
+              <Text>Remove</Text>
             </Button>
           </DialogFooter>
         </DialogContent>

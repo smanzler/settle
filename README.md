@@ -40,6 +40,10 @@ amount; shares sum to the amount.
 A **settlement** is a claim that one member paid another outside the app. It is
 attached to no expense — it settles a net position, not a line item.
 
+A group's **currency** is chosen when the group is made and never changes.
+Nothing in the app converts, so re-denominating a group that already has
+balances would silently restate what everybody owes.
+
 ## The ledger
 
 This is the part worth reading before you change anything.
@@ -50,7 +54,7 @@ integer-cent amount against one member:
 > **Positive means the group owes this member. Negative means this member owes
 > the group.**
 
-Six rules hold, and each one is a test in `src/lib/ledger.test.ts`:
+Five rules hold, and each one is a test in `src/lib/ledger.test.ts`:
 
 1. **Money is integer cents.** `bigint` in Postgres, `number` in TS. Never a
    float, never a decimal string. Formatting happens in the client only.
@@ -61,16 +65,18 @@ Six rules hold, and each one is a test in `src/lib/ledger.test.ts`:
 3. **Every logical event sums to zero.** Posting an expense writes `+A` across
    the payers and `-A` across the shares. Reversing writes the negation.
    Settling writes `+X` and `-X`. `assertZeroSum` checks it before every commit.
-4. **Therefore every group sums to zero, always.** `getGroupImbalance` is the
-   canary; the write paths call it before committing and a nightly pg-boss job
-   sweeps every group.
+4. **Therefore every group sums to zero, always.** `assertGroupIntegrity` is the
+   last thing every write transaction does before it commits, so a lopsided
+   event never reaches disk.
 5. **Balances are derived, never stored.** There is no balance column anywhere.
    A balance is `sum(amount_cents)` per member. Adding a cached column "for
    performance" is the mistake this design exists to prevent.
-6. **Splits are stored as resolved cents, not percentages.** Rounding is decided
-   once, at write time, by `allocate` in `packages/shared/src/money.ts`
-   (largest-remainder, exact, sign-symmetric, stable). It lives in `shared` so
-   the split editor previews the exact numbers the server will store.
+
+Splits are stored as resolved cents, never as weights or percentages. There are
+two ways to divide an amount — equally, or by typing each share — and both
+resolve through `buildShares` in `packages/shared/src/expense.ts`, once, at write
+time. It lives in `shared` so the editor previews the exact numbers the server
+will store.
 
 Four functions write to the table, and nothing else may: `postExpenseVersion`,
 `reverseExpenseVersion`, `postSettlement` and `reverseSettlement`, all in
@@ -106,18 +112,9 @@ Recording one of those transfers is an ordinary `settlements.create`. The
 client generates the id so a double-tap on a slow network cannot invent a
 repayment that never happened.
 
-Writing off a leaver's balance is not a special kind of entry: it records the
-settlements that square them up, tagged `method: 'write-off'`, so it appears in
-the payments list and reverses like anything else.
-
-### Verifying it
-
-`verifyLedger` recomputes every position from the documents themselves — the
-current version of every live expense, plus every settlement that is not voided
-— and reports anyone the ledger disagrees with. `getGroupImbalance` catches a
-lopsided event; `verifyLedger` catches one that was skipped or double-posted
-symmetrically, which sums to zero and is invisible to the first. Both run in
-every integration test, on demand through `balances.verify`, and nightly.
+A member carrying a balance cannot be removed and cannot leave — the refusal
+names what they owe. There is deliberately no "write it off anyway": a balance is
+somebody's real money, and the way to clear it is to settle up.
 
 ## Authorization
 
@@ -149,5 +146,5 @@ safe target.
 ## What this app deliberately does not do
 
 No bank or card feeds. No payment rails — nothing here moves money. No currency
-conversion: a group has one currency, frozen the moment anything is posted. No
-receipt scanning, no recurring expenses, no real-time sync.
+conversion. No receipt scanning, no recurring expenses, no real-time sync. No
+file uploads. Nothing is here that the app does not need to work.

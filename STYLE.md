@@ -16,7 +16,7 @@
 - Spread (`[...a, ...b]`, `{...a, ...b}`) over clone + mutate
 - Early returns over `let data; try { data = ... }` patterns
 
-**Functions, not classes.** React components are `function` declarations (`function Button(...)`, `export default function Home()`); everything else is a `const` arrow function. Classes come from SDKs only — construct them once as a module-level singleton under `src/lib` (see `s3.ts`, `boss.ts`, `expo.ts` in `packages/api`) and export the configured instance rather than constructing at call sites.
+**Functions, not classes.** React components are `function` declarations (`function Button(...)`, `export default function Home()`); everything else is a `const` arrow function. Classes come from SDKs only — construct them once as a module-level singleton under `src/lib` (see `boss.ts`, `expo.ts` in `packages/api`) and export the configured instance rather than constructing at call sites.
 
 | Use case          | Solution                           |
 | ----------------- | ---------------------------------- |

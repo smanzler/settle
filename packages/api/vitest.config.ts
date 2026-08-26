@@ -14,12 +14,6 @@ const testEnv: Record<keyof Env, string> = {
   PORT: "4000",
   CLIENT_ORIGIN: "http://localhost:3000",
 
-  BUCKET_REGION: "us-east-1",
-  BUCKET_ACCESS_KEY_ID: "test-access-key-id",
-  BUCKET_SECRET_KEY: "test-secret-key",
-  BUCKET_NAME: "test-bucket",
-  BUCKET_URL: "https://cdn.example.com",
-
   SMTP_HOST: "test",
   SMTP_PORT: "1025",
   SMTP_SECURE: "false",

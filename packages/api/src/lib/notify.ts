@@ -15,8 +15,6 @@ const renderNotification = (
   payload: NotificationPayload,
 ): { title: string; body: string } => {
   switch (payload.type) {
-    case "system_message":
-      return { title: "Budget", body: payload.data.message };
     case "settlement_recorded":
       return {
         title: "Payment recorded",

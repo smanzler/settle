@@ -1,4 +1,3 @@
-export * from "./error";
 export * from "./expense";
 export * from "./group";
 export * from "./money";

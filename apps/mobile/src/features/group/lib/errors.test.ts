@@ -1,5 +1,5 @@
 import { TRPCClientError } from "@trpc/client";
-import { formatJoinError, outstandingBalanceRefusal } from "./errors";
+import { formatJoinError } from "./errors";
 
 /** What a link hands the caller once the server has refused. */
 const apiError = (code: string, message: string) =>
@@ -14,54 +14,6 @@ const apiError = (code: string, message: string) =>
 /** A dropped connection — a `TRPCClientError` too, but with no shape on it. */
 const transportError = () =>
   TRPCClientError.from(new Error("Network request failed"));
-
-describe("outstandingBalanceRefusal", () => {
-  it("keeps the sentence naming the balance and drops the instruction", () => {
-    const error = apiError(
-      "PRECONDITION_FAILED",
-      "Ana still owes the group 214.30 USD. Write the balance off to remove them anyway.",
-    );
-
-    expect(outstandingBalanceRefusal(error)).toBe(
-      "Ana still owes the group 214.30 USD.",
-    );
-  });
-
-  it("reads the leaver's own refusal the same way", () => {
-    const error = apiError(
-      "PRECONDITION_FAILED",
-      "The group still owes you 40.00 USD. Write the balance off to leave anyway.",
-    );
-
-    expect(outstandingBalanceRefusal(error)).toBe(
-      "The group still owes you 40.00 USD.",
-    );
-  });
-
-  // The other PRECONDITION_FAILED refusals. Offering a write-off for one of
-  // them would put the user through the same dialog forever.
-  it("ignores a refusal no write-off can repair", () => {
-    expect(
-      outstandingBalanceRefusal(
-        apiError("PRECONDITION_FAILED", "A group must keep at least one owner"),
-      ),
-    ).toBeNull();
-
-    expect(
-      outstandingBalanceRefusal(
-        apiError(
-          "PRECONDITION_FAILED",
-          "This group already has balances, so its currency is fixed. Settle up and start a new group instead.",
-        ),
-      ),
-    ).toBeNull();
-  });
-
-  it("ignores anything that isn't an API refusal", () => {
-    expect(outstandingBalanceRefusal(transportError())).toBeNull();
-    expect(outstandingBalanceRefusal(new Error("boom"))).toBeNull();
-  });
-});
 
 describe("formatJoinError", () => {
   it("explains the codes the join screen owns", () => {

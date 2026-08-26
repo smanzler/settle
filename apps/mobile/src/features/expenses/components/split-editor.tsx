@@ -11,9 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   buildShares,
   fromCents,
-  MAX_WEIGHT,
   sumAmounts,
-  type AllocationPart,
   type Share,
   type Split,
 } from "@budget/shared";
@@ -22,19 +20,16 @@ import type { Member } from "@/features/group/hooks/use-group";
 import { SplitMemberRow, type MemberAmount } from "./split-member-row";
 
 /**
- * The split as the editor holds it — text, because a half-typed weight or
- * amount has to survive between keystrokes. `buildSplit` turns it into the
- * `Split` the API takes, and refuses while the numbers are not ones the server
- * would accept.
+ * The split as the editor holds it — text, because a half-typed amount has to
+ * survive between keystrokes. `buildSplit` turns it into the `Split` the API
+ * takes, and refuses while the numbers are not ones the server would accept.
  */
 export type SplitState =
   | { mode: "equal"; memberIds: string[] }
-  | { mode: "weights"; parts: Record<string, string> }
   | { mode: "exact"; parts: Record<string, string> };
 
 const MODES = [
   { label: "Equally", value: "equal" },
-  { label: "Shares", value: "weights" },
   { label: "Amounts", value: "exact" },
 ] as const satisfies { label: string; value: SplitState["mode"] }[];
 
@@ -63,24 +58,6 @@ export const toAmountParts = (
   const entered = entries.filter(isEntered);
 
   return entered.length === entries.length ? entered : null;
-};
-
-const isWeight = (part: AllocationPart) =>
-  Number.isInteger(part.weight) &&
-  part.weight >= 1 &&
-  part.weight <= MAX_WEIGHT;
-
-/** Every typed weight, or `null` while one of them is not one the API takes. */
-const toWeightParts = (
-  parts: Record<string, string>,
-): AllocationPart[] | null => {
-  const entries = Object.entries(parts).map(([memberId, draft]) => ({
-    memberId,
-    // An empty box reads as 0, which `isWeight` rejects along with "abc".
-    weight: Number(draft.trim()),
-  }));
-
-  return entries.every(isWeight) ? entries : null;
 };
 
 /** A drafts record with one member set, or dropped when `draft` is null. */
@@ -117,11 +94,6 @@ export const buildSplit = (
       return state.memberIds.length > 0
         ? { memberIds: state.memberIds, mode: "equal" }
         : null;
-    case "weights": {
-      const parts = toWeightParts(state.parts);
-
-      return parts && parts.length > 0 ? { mode: "weights", parts } : null;
-    }
     case "exact": {
       const parts = toAmountParts(state.parts);
       if (!parts || parts.length === 0 || amountCents === null) return null;
@@ -155,15 +127,6 @@ export const buildInitialSplit = ({
   switch (split.mode) {
     case "equal":
       return { memberIds: split.memberIds.filter(isKnown), mode: "equal" };
-    case "weights":
-      return {
-        mode: "weights",
-        parts: Object.fromEntries(
-          split.parts
-            .filter((part) => isKnown(part.memberId))
-            .map((part) => [part.memberId, String(part.weight)]),
-        ),
-      };
     case "exact":
       return {
         mode: "exact",
@@ -250,13 +213,6 @@ export function SplitEditor({
     switch (mode) {
       case "equal":
         return { memberIds: included, mode };
-      case "weights":
-        // All 1s is the equal split again, so this changes nothing on screen
-        // until a weight is edited.
-        return {
-          mode,
-          parts: Object.fromEntries(included.map((id) => [id, "1"])),
-        };
       case "exact":
         // Seeded from the resolved preview so the editor opens balanced: typing
         // one number and nudging another is the edit people actually make.
@@ -289,15 +245,6 @@ export function SplitEditor({
             : [...value.memberIds, memberId],
           mode: "equal",
         };
-      case "weights":
-        return {
-          mode: "weights",
-          parts: withDraft({
-            draft: isIn ? null : "1",
-            memberId,
-            parts: value.parts,
-          }),
-        };
       case "exact":
         return {
           mode: "exact",
@@ -318,17 +265,6 @@ export function SplitEditor({
     switch (value.mode) {
       case "equal":
         return { cents: shares?.get(memberId) ?? null, kind: "share" };
-      case "weights":
-        return {
-          cents: shares?.get(memberId) ?? null,
-          kind: "weight",
-          onChangeText: (draft) =>
-            onChange({
-              mode: "weights",
-              parts: withDraft({ draft, memberId, parts: value.parts }),
-            }),
-          value: value.parts[memberId] ?? "",
-        };
       case "exact":
         return {
           kind: "money",

@@ -1,13 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import db from "../../db";
 import { toMemberRef } from "../../lib/group";
-import {
-  getGroupImbalance,
-  listGroupBalances,
-  verifyLedger,
-} from "../../lib/ledger";
+import { listGroupBalances } from "../../lib/ledger";
 import { simplify } from "../../lib/settle-up";
-import { groupProcedure, ownerProcedure, router } from "../../lib/trpc";
+import { groupProcedure, router } from "../../lib/trpc";
 
 const loadGroup = async (groupId: string) => {
   const group = await db.query.Groups.findFirst({
@@ -94,24 +90,5 @@ export const balancesRouter = router({
         to: named(transfer.toMemberId),
       })),
     };
-  }),
-
-  /**
-   * Recomputes every position from the expenses and settlements themselves and
-   * reports anyone the ledger disagrees with.
-   *
-   * Owner-only because it is a diagnostic, not a feature: a healthy group always
-   * answers `{ imbalance: 0, drift: [] }`. Anything else means a post or a
-   * reversal was missed, and the number on somebody's screen is wrong.
-   */
-  verify: ownerProcedure.query(async (opts) => {
-    const { groupId } = opts.ctx;
-
-    const [drift, imbalance] = await Promise.all([
-      verifyLedger(groupId),
-      getGroupImbalance(groupId),
-    ]);
-
-    return { drift, imbalance };
   }),
 });

@@ -16,5 +16,3 @@ export const settlementInputSchema = z.object({
   note: z.string().trim().max(500).nullish(),
   settledOn: z.iso.date(),
 });
-
-export type SettlementInput = z.infer<typeof settlementInputSchema>;

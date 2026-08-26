@@ -1,8 +1,6 @@
 import db from "../db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter/relations-v2";
-import { fromNodeHeaders } from "better-auth/node";
-import type { FastifyReply, FastifyRequest } from "fastify";
 import { expo } from "@better-auth/expo";
 import { emailOTP } from "better-auth/plugins";
 import * as schema from "../db/auth-schema";
@@ -64,19 +62,3 @@ declare module "fastify" {
     session: typeof auth.$Infer.Session.session;
   }
 }
-
-export const authHook = async (
-  request: FastifyRequest,
-  reply: FastifyReply,
-) => {
-  const session = await auth.api.getSession({
-    headers: fromNodeHeaders(request.headers),
-  });
-
-  if (!session) {
-    return reply.status(401).send({ error: "Unauthorized" });
-  }
-
-  request.user = session.user;
-  request.session = session.session;
-};

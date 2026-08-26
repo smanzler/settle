@@ -9,12 +9,6 @@ export const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   CLIENT_ORIGIN: z.string().default("http://localhost:3000"),
 
-  BUCKET_REGION: z.string(),
-  BUCKET_ACCESS_KEY_ID: z.string(),
-  BUCKET_SECRET_KEY: z.string(),
-  BUCKET_NAME: z.string(),
-  BUCKET_URL: z.string(),
-
   SMTP_HOST: z.string().default("localhost"),
   SMTP_PORT: z.coerce.number().default(1025),
   SMTP_SECURE: z.coerce.boolean().default(false),

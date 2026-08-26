@@ -48,15 +48,14 @@ export const Groups = pgTable("groups", {
     onDelete: "set null",
   }),
   /**
-   * Every amount in this group is assumed to be in this currency. There is no
-   * conversion anywhere in the app — see `groups.setCurrency`, which freezes it
-   * the moment anything is posted.
+   * Every amount in this group is in this currency. Chosen when the group is
+   * made and never changed: nothing in the app converts, so re-denominating a
+   * group that already has balances would silently restate what people owe.
    */
   isoCurrencyCode: text("iso_currency_code").notNull().default("USD"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-  archivedAt: timestamp("archived_at", { withTimezone: true }),
 });
 
 /**
@@ -344,7 +343,7 @@ export const Settlements = pgTable(
     fromMemberId: uuid("from_member_id").notNull(),
     toMemberId: uuid("to_member_id").notNull(),
     amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
-    /** Free text: 'cash', 'venmo', 'zelle', 'write-off'. */
+    /** Free text: 'cash', 'venmo', 'zelle'. */
     method: text("method"),
     note: text("note"),
     settledOn: date("settled_on").notNull(),

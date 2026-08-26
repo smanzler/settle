@@ -56,8 +56,9 @@ export function Balances() {
   };
 
   // A seat that left and owes nothing is not part of the group any more. One
-  // that left with a balance stays until it is squared up — which is reachable
-  // after leaving, because voiding the write-off puts the balance back.
+  // that left and then took a position again stays until it is squared up:
+  // a retired seat is still payable, and voiding one of those payments puts the
+  // balance back.
   const isOutstanding = (member: MemberBalance) =>
     member.status !== "removed" || member.netCents !== 0;
 

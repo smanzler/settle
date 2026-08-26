@@ -1,10 +1,5 @@
 import { z } from "zod";
 
-export const systemMessageSchema = z.object({
-  type: z.literal("system_message"),
-  data: z.object({ message: z.string() }),
-});
-
 /**
  * Somebody claimed they paid you back.
  *
@@ -57,7 +52,6 @@ export const settlementVoidedSchema = z.object({
  * handling a tap.
  */
 export const notificationPayloadSchema = z.discriminatedUnion("type", [
-  systemMessageSchema,
   settlementRecordedSchema,
   settlementVoidedSchema,
 ]);

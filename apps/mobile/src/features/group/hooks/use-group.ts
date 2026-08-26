@@ -12,8 +12,7 @@ export type Member = RouterOutputs["groups"]["get"]["members"][number];
  * keeps the history it is already on, but takes no new share — which is the
  * same rule `assertSplittable` enforces on the server.
  */
-export const isSplittable = (member: Member): boolean =>
-  member.status !== "removed";
+const isSplittable = (member: Member): boolean => member.status !== "removed";
 
 /**
  * The group, shaped for the screens. Every `groups.get` consumer goes through
@@ -93,28 +92,6 @@ export const useRenameGroup = () => {
     trpc.groups.rename.mutationOptions({
       onSuccess: async () => {
         await queryClient.invalidateQueries(trpc.groups.pathFilter());
-      },
-    }),
-  );
-};
-
-/**
- * The group's currency.
- *
- * Balances too: every figure on that screen is labelled with the code, and the
- * server only lets this through while there is nothing posted to relabel.
- */
-export const useSetCurrency = () => {
-  const trpc = useTRPC();
-  const queryClient = useQueryClient();
-
-  return useMutation(
-    trpc.groups.setCurrency.mutationOptions({
-      onSuccess: async () => {
-        await Promise.all([
-          queryClient.invalidateQueries(trpc.groups.pathFilter()),
-          queryClient.invalidateQueries(trpc.balances.pathFilter()),
-        ]);
       },
     }),
   );

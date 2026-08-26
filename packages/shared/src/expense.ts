@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { allocate, equalParts, MAX_WEIGHT } from "./money";
 
 /**
- * The `bigint` column has room for far more, but every amount is handled as a
- * `number` in TS and multiplied by a weight of up to `MAX_WEIGHT` inside
- * `allocate` — 1e12 × 1000 = 1e15, still under 2^53.
+ * The `bigint` column has room for far more; this is the bound that keeps every
+ * amount a safe integer in TS, where all the arithmetic happens.
  */
 export const MAX_AMOUNT_CENTS = 1_000_000_000_000;
 
@@ -13,7 +11,7 @@ const memberIdSchema = z.uuid();
 const isDistinct = (ids: readonly string[]) => new Set(ids).size === ids.length;
 
 /** Who fronted the money. Several payers on one expense is ordinary. */
-export const payerSchema = z.object({
+const payerSchema = z.object({
   memberId: memberIdSchema,
   amountCents: z.int().positive().max(MAX_AMOUNT_CENTS),
 });
@@ -23,10 +21,10 @@ export type Payer = z.infer<typeof payerSchema>;
 /**
  * How an amount is divided, as the user expressed it.
  *
- * A discriminated union rather than three optional fields, because the three
- * modes need genuinely different data and "weights present but amounts also
- * present" must not be representable. What gets *stored* is neither of these —
- * it is the cents `buildShares` resolves them to, once, at write time.
+ * A discriminated union rather than optional fields, because the two modes need
+ * genuinely different data and "a member list and a set of amounts, both" must
+ * not be representable. What gets *stored* is neither — it is the cents
+ * `buildShares` resolves them to, once, at write time.
  */
 export const splitSchema = z.discriminatedUnion("mode", [
   z.object({
@@ -34,20 +32,6 @@ export const splitSchema = z.discriminatedUnion("mode", [
     memberIds: z.array(memberIdSchema).min(1).refine(isDistinct, {
       message: "A member can only appear once in a split",
     }),
-  }),
-  z.object({
-    mode: z.literal("weights"),
-    parts: z
-      .array(
-        z.object({
-          memberId: memberIdSchema,
-          weight: z.int().min(1).max(MAX_WEIGHT),
-        }),
-      )
-      .min(1)
-      .refine((parts) => isDistinct(parts.map((part) => part.memberId)), {
-        message: "A member can only appear once in a split",
-      }),
   }),
   z.object({
     mode: z.literal("exact"),
@@ -79,8 +63,8 @@ export const sumAmounts = (parts: readonly { amountCents: number }[]) =>
  *
  * The one place rounding is decided, and it is decided **once, at write time**:
  * nothing downstream ever divides again, so a share can never disagree with the
- * ledger that carries it. Lives in `shared` for the same reason `allocate`
- * does — the editor previews the exact numbers the server is about to store.
+ * ledger that carries it. Lives in `shared` so the editor previews the exact
+ * numbers the server is about to store.
  *
  * Throws on an `exact` split that does not add up. That is a user-facing
  * condition, not an internal one: the editor keeps Save disabled until the
@@ -90,9 +74,7 @@ export const sumAmounts = (parts: readonly { amountCents: number }[]) =>
 export const buildShares = (amountCents: number, split: Split): Share[] => {
   switch (split.mode) {
     case "equal":
-      return toShares(allocate(amountCents, equalParts(split.memberIds)));
-    case "weights":
-      return toShares(allocate(amountCents, split.parts));
+      return splitEqually(amountCents, split.memberIds);
     case "exact": {
       const total = sumAmounts(split.parts);
 
@@ -110,8 +92,37 @@ export const buildShares = (amountCents: number, split: Split): Share[] => {
   }
 };
 
-const toShares = (allocated: Map<string, number>): Share[] =>
-  [...allocated].map(([memberId, amountCents]) => ({ memberId, amountCents }));
+/**
+ * Divides an amount evenly, exactly.
+ *
+ * Integer-divide, then hand the remaining cents out one at a time. Two
+ * properties everything downstream depends on: the results always sum to
+ * `totalCents`, and the same input always resolves the same way — so the
+ * editor's preview, the server's write and every later revision agree to the
+ * cent.
+ *
+ * The odd cents go to the lowest member ids, compared with `<` rather than
+ * `localeCompare`, which is locale- and ICU-dependent and can differ between the
+ * phone and the server. The cost is that the lowest id always absorbs it;
+ * rotating for fairness would cost the determinism, which is not a trade worth
+ * making.
+ */
+const splitEqually = (
+  totalCents: number,
+  memberIds: readonly string[],
+): Share[] => {
+  const base = Math.floor(totalCents / memberIds.length);
+  const leftover = totalCents - base * memberIds.length;
+
+  const takesAnExtraCent = new Set(
+    [...memberIds].sort((a, b) => (a < b ? -1 : 1)).slice(0, leftover),
+  );
+
+  return memberIds.map((memberId) => ({
+    memberId,
+    amountCents: base + (takesAnExtraCent.has(memberId) ? 1 : 0),
+  }));
+};
 
 /**
  * The body of `expenses.create` and `expenses.revise` alike — a revision states

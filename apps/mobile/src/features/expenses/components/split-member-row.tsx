@@ -13,10 +13,8 @@ import type { Member } from "@/features/group/hooks/use-group";
 /**
  * The right edge of the row.
  *
- * `share` is a figure the editor resolved; `money` and `weight` are boxes the
- * user types in. A `weight` also shows the cents it currently resolves to,
- * because a bare "2" says nothing about the money. A `null` in either says the
- * split cannot be resolved yet — no amount, or a box that holds no number.
+ * `share` is a figure the editor resolved; `money` is a box the user types in.
+ * A `null` in a share says the split cannot be resolved yet — no amount typed.
  */
 export type MemberAmount =
   | { kind: "none" }
@@ -25,12 +23,6 @@ export type MemberAmount =
       kind: "money";
       /** Follows the member's name in the box's label: "share", "paid". */
       noun: string;
-      onChangeText: (value: string) => void;
-      value: string;
-    }
-  | {
-      kind: "weight";
-      cents: number | null;
       onChangeText: (value: string) => void;
       value: string;
     };
@@ -93,23 +85,6 @@ export function SplitMemberRow({
         <Text className="tabular-nums">
           {amount.cents === null ? "—" : formatCents(amount.cents, currency)}
         </Text>
-      ) : null}
-
-      {amount.kind === "weight" ? (
-        <>
-          <Text className="text-muted-foreground text-sm tabular-nums">
-            {amount.cents === null ? "—" : formatCents(amount.cents, currency)}
-          </Text>
-          <Input
-            value={amount.value}
-            onChangeText={amount.onChangeText}
-            keyboardType="number-pad"
-            selectTextOnFocus
-            placeholder="1"
-            aria-label={`${name} shares`}
-            className="min-h-9 w-14 text-center tabular-nums"
-          />
-        </>
       ) : null}
 
       {amount.kind === "money" ? (

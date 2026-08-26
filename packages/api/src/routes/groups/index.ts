@@ -10,41 +10,24 @@ import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import db from "../../db";
-import {
-  GroupInvites,
-  GroupMembers,
-  Groups,
-  Settlements,
-  users,
-} from "../../db/schema";
+import { GroupInvites, GroupMembers, Groups, users } from "../../db/schema";
 import {
   createGroup,
-  hasPostedEntries,
   memberDisplayName,
   resolveActiveMember,
   setActiveGroup,
   toNormalizedEmail,
 } from "../../lib/group";
 import { renderInviteEmail } from "../../lib/invite-email";
-import {
-  assertGroupIntegrity,
-  listGroupBalances,
-  lockGroup,
-  postSettlement,
-  type Tx,
-} from "../../lib/ledger";
+import { listGroupBalances, lockGroup, type Tx } from "../../lib/ledger";
 import { sendEmail } from "../../lib/mailer";
 import { toIso } from "../../lib/serialize";
-import { simplify } from "../../lib/settle-up";
 import {
   groupProcedure,
   ownerProcedure,
   protectedProcedure,
   router,
 } from "../../lib/trpc";
-
-/** `YYYY-MM-DD` — the shape every `date` column in this schema round-trips. */
-const today = () => new Date().toISOString().slice(0, 10);
 
 const isOwner = (seat: { role: string }) => seat.role === "owner";
 
@@ -83,17 +66,16 @@ const inviteCode = () => {
 };
 
 /**
- * Retires a seat, squaring it up first if asked to.
+ * Retires a seat that owes nothing and is owed nothing.
  *
  * Shared by `removeMember` and `leave`, which differ only in who decides and in
- * how every sentence reads. The caller must already hold `lockGroup`: the
- * write-off decides what to write by reading the balances, and an expense
- * posted between the two halves would be cancelled without ever being counted.
+ * how every sentence reads. The caller must already hold `lockGroup`: this reads
+ * the balances and then retires on what it read, and an expense committing in
+ * between would strand a debt on a seat that has just left.
  *
- * The write-off is not a special kind of ledger entry. It is the settlements
- * that square the seat up, recorded with `method: 'write-off'` — so it shows up
- * in the payments list, reverses like any other payment, and needs no new
- * concept in the ledger.
+ * A seat still carrying a position is refused outright. There is deliberately no
+ * "write it off anyway": a balance is somebody's real money, and the way to
+ * clear it is to settle up.
  */
 const retireSeat = async (
   tx: Tx,
@@ -101,11 +83,8 @@ const retireSeat = async (
     groupId: string;
     /** The seat being retired. */
     target: { id: string; displayName: string };
-    /** Whose name goes on the write-off settlements. */
-    actorMemberId: string;
     /** `self` when somebody is leaving; changes every sentence below. */
     voice: "self" | "other";
-    writeOffBalance: boolean | undefined;
     isoCurrencyCode: string;
   },
 ) => {
@@ -116,7 +95,7 @@ const retireSeat = async (
   const net =
     balances.find((balance) => balance.memberId === target.id)?.netCents ?? 0;
 
-  if (net !== 0 && args.writeOffBalance !== true) {
+  if (net !== 0) {
     const amount = `${fromCents(Math.abs(net))} ${args.isoCurrencyCode}`;
     const owes = voice === "self" ? "still owe" : "still owes";
 
@@ -126,63 +105,8 @@ const retireSeat = async (
         net < 0
           ? `${subject} ${owes} the group ${amount}`
           : `The group still owes ${voice === "self" ? "you" : subject} ${amount}`
-      }. Write the balance off to ${
-        voice === "self" ? "leave" : "remove them"
-      } anyway.`,
+      }. Settle up first.`,
     });
-  }
-
-  if (net !== 0) {
-    // Only the other side of the position can absorb it, and there is always
-    // enough of it: the group sums to zero, so the members opposite this seat
-    // hold at least its magnitude between them.
-    const counterparties = balances.filter(
-      (balance) =>
-        balance.memberId !== target.id &&
-        Math.sign(balance.netCents) === -Math.sign(net),
-    );
-
-    const transfers = simplify([
-      { memberId: target.id, netCents: net },
-      ...counterparties,
-    ]);
-
-    const note = `Balance written off when ${target.displayName} ${
-      voice === "self" ? "left" : "was removed"
-    }`;
-
-    for (const transfer of transfers) {
-      const [settlement] = await tx
-        .insert(Settlements)
-        .values({
-          amountCents: transfer.amountCents,
-          createdByMemberId: args.actorMemberId,
-          fromMemberId: transfer.fromMemberId,
-          groupId,
-          method: "write-off",
-          note,
-          settledOn: today(),
-          toMemberId: transfer.toMemberId,
-        })
-        .returning({ id: Settlements.id });
-
-      if (!settlement) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to write the balance off",
-        });
-      }
-
-      await postSettlement(tx, {
-        amountCents: transfer.amountCents,
-        fromMemberId: transfer.fromMemberId,
-        groupId,
-        settlementId: settlement.id,
-        toMemberId: transfer.toMemberId,
-      });
-    }
-
-    await assertGroupIntegrity(tx, groupId);
   }
 
   // An outstanding code for this seat would set it straight back to `active` and
@@ -205,13 +129,6 @@ const retireSeat = async (
     .where(
       and(eq(GroupMembers.id, target.id), eq(GroupMembers.groupId, groupId)),
     );
-
-  return {
-    writtenOff:
-      net === 0
-        ? null
-        : { cents: Math.abs(net), currency: args.isoCurrencyCode },
-  };
 };
 
 export const groupsRouter = router({
@@ -255,9 +172,20 @@ export const groupsRouter = router({
     }));
   }),
 
-  /** A second group — a trip, a different household — and switches into it. */
+  /**
+   * A second group — a trip, a different household — and switches into it.
+   *
+   * The currency is fixed here and never changes. Nothing in the app converts,
+   * so re-denominating a group that already has balances would silently restate
+   * everybody's position; making it immutable is the honest version of that.
+   */
   create: protectedProcedure
-    .input(z.object({ name: groupNameSchema }))
+    .input(
+      z.object({
+        currency: currencySchema.optional(),
+        name: groupNameSchema,
+      }),
+    )
     .mutation(async (opts) => {
       const { user } = opts.ctx;
 
@@ -265,6 +193,7 @@ export const groupsRouter = router({
         const member = await createGroup(tx, {
           createdByUserId: user.id,
           displayName: memberDisplayName(user),
+          isoCurrencyCode: opts.input.currency,
           name: opts.input.name,
         });
 
@@ -308,19 +237,16 @@ export const groupsRouter = router({
   get: groupProcedure.query(async (opts) => {
     const { groupId, member } = opts.ctx;
 
-    const [group, posted] = await Promise.all([
-      db.query.Groups.findFirst({
-        where: { id: groupId },
-        columns: { id: true, name: true, isoCurrencyCode: true },
-        with: {
-          members: {
-            columns: { id: true, displayName: true, status: true, role: true },
-            orderBy: { createdAt: "asc" },
-          },
+    const group = await db.query.Groups.findFirst({
+      where: { id: groupId },
+      columns: { id: true, name: true, isoCurrencyCode: true },
+      with: {
+        members: {
+          columns: { id: true, displayName: true, status: true, role: true },
+          orderBy: { createdAt: "asc" },
         },
-      }),
-      hasPostedEntries(groupId),
-    ]);
+      },
+    });
 
     if (!group) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Group not found" });
@@ -329,8 +255,6 @@ export const groupsRouter = router({
     return {
       id: group.id,
       isoCurrencyCode: group.isoCurrencyCode,
-      /** Once anything has been posted, `setCurrency` refuses — see there. */
-      currencyLocked: posted,
       // Removed seats are included: the ledger and the expense history still
       // reference them, so the client needs a name for every id it can meet.
       members: group.members.map((seat) => ({
@@ -353,42 +277,6 @@ export const groupsRouter = router({
         .set({ name: opts.input.name })
         .where(eq(Groups.id, opts.ctx.groupId))
         .returning({ id: Groups.id, name: Groups.name });
-
-      if (!group) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Group not found" });
-      }
-
-      return group;
-    }),
-
-  /**
-   * The group's currency, changeable only while it has no history.
-   *
-   * Frozen once a ledger entry exists, and that is the whole safety argument.
-   * Nothing in the app converts, so a later change would silently re-denominate
-   * every balance already on file. Refusing is the only honest answer.
-   */
-  setCurrency: ownerProcedure
-    .input(z.object({ currency: currencySchema }))
-    .mutation(async (opts) => {
-      const { groupId } = opts.ctx;
-
-      if (await hasPostedEntries(groupId)) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message:
-            "This group already has balances, so its currency is fixed. Settle up and start a new group instead.",
-        });
-      }
-
-      const [group] = await db
-        .update(Groups)
-        .set({ isoCurrencyCode: opts.input.currency })
-        .where(eq(Groups.id, groupId))
-        .returning({
-          id: Groups.id,
-          isoCurrencyCode: Groups.isoCurrencyCode,
-        });
 
       if (!group) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Group not found" });
@@ -835,12 +723,10 @@ export const groupsRouter = router({
     }),
 
   removeMember: ownerProcedure
-    .input(
-      z.object({ memberId: z.uuid(), writeOffBalance: z.boolean().optional() }),
-    )
+    .input(z.object({ memberId: z.uuid() }))
     .mutation(async (opts) => {
       const { groupId, member } = opts.ctx;
-      const { memberId, writeOffBalance } = opts.input;
+      const { memberId } = opts.input;
 
       if (memberId === member.id) {
         throw new TRPCError({
@@ -859,9 +745,9 @@ export const groupsRouter = router({
       }
 
       return db.transaction(async (tx) => {
-        // Before the balances are read, not after: the write-off decides what to
-        // write by reading them, and an expense posted in between would be
-        // cancelled without ever being counted.
+        // Before the balances are read, not after: the retirement is decided on
+        // what they say, and an expense committing in between would strand a
+        // debt on a seat that has just left.
         await lockGroup(tx, groupId);
 
         const [target] = await tx
@@ -887,7 +773,7 @@ export const groupsRouter = router({
           });
         }
 
-        if (target.status === "removed") return { memberId, writtenOff: null };
+        if (target.status === "removed") return { memberId };
 
         if (target.role === "owner") {
           const remainingOwners = await tx
@@ -911,16 +797,14 @@ export const groupsRouter = router({
           }
         }
 
-        const { writtenOff } = await retireSeat(tx, {
-          actorMemberId: member.id,
+        await retireSeat(tx, {
           groupId,
           isoCurrencyCode: group.isoCurrencyCode,
           target,
           voice: "other",
-          writeOffBalance,
         });
 
-        return { memberId, writtenOff };
+        return { memberId };
       });
     }),
 
@@ -1029,76 +913,71 @@ export const groupsRouter = router({
    * references this seat forever, so its history has to keep rendering with a
    * name.
    */
-  leave: groupProcedure
-    .input(z.object({ writeOffBalance: z.boolean().optional() }).optional())
-    .mutation(async (opts) => {
-      const { groupId, member, user } = opts.ctx;
-      const writeOffBalance = opts.input?.writeOffBalance;
+  leave: groupProcedure.mutation(async (opts) => {
+    const { groupId, member, user } = opts.ctx;
 
-      const group = await db.query.Groups.findFirst({
-        where: { id: groupId },
-        columns: { isoCurrencyCode: true },
-      });
+    const group = await db.query.Groups.findFirst({
+      where: { id: groupId },
+      columns: { isoCurrencyCode: true },
+    });
 
-      if (!group) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Group not found" });
+    if (!group) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Group not found" });
+    }
+
+    return db.transaction(async (tx) => {
+      await lockGroup(tx, groupId);
+
+      const others = await tx
+        .select({
+          id: GroupMembers.id,
+          role: GroupMembers.role,
+          status: GroupMembers.status,
+        })
+        .from(GroupMembers)
+        .where(
+          and(
+            eq(GroupMembers.groupId, groupId),
+            ne(GroupMembers.status, "removed"),
+            ne(GroupMembers.id, member.id),
+          ),
+        );
+
+      // Leaving as the last owner of a group somebody can still be in would
+      // leave it unadministrable — nobody could invite, remove or rename ever
+      // again. Leaving as the last seat *anywhere* is fine: the group goes
+      // quiet, and its data stays for whoever still has a balance riding on it.
+      //
+      // An unclaimed seat counts. Nobody is in it yet, but somebody still can
+      // be, and they would arrive to a group with no owner — and no invited
+      // seat can be handed the role, because `transferOwnership` needs a user
+      // behind it.
+      if (
+        member.role === "owner" &&
+        others.length > 0 &&
+        !others.some((seat) => seat.status === "active" && isOwner(seat))
+      ) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: others.some((seat) => seat.status === "active")
+            ? "You're the only owner. Make somebody else the owner before you leave."
+            : "You're the only owner and nobody has accepted their invite yet, so there's nobody to hand the group to. Remove the seats you invited, then leave.",
+        });
       }
 
-      return db.transaction(async (tx) => {
-        await lockGroup(tx, groupId);
-
-        const others = await tx
-          .select({
-            id: GroupMembers.id,
-            role: GroupMembers.role,
-            status: GroupMembers.status,
-          })
-          .from(GroupMembers)
-          .where(
-            and(
-              eq(GroupMembers.groupId, groupId),
-              ne(GroupMembers.status, "removed"),
-              ne(GroupMembers.id, member.id),
-            ),
-          );
-
-        // Leaving as the last owner of a group somebody can still be in would
-        // leave it unadministrable — nobody could invite, remove or rename ever
-        // again. Leaving as the last seat *anywhere* is fine: the group goes
-        // quiet, and its data stays for whoever still has a balance riding on it.
-        //
-        // An unclaimed seat counts. Nobody is in it yet, but somebody still can
-        // be, and they would arrive to a group with no owner — and no invited
-        // seat can be handed the role, because `transferOwnership` needs a user
-        // behind it.
-        if (
-          member.role === "owner" &&
-          others.length > 0 &&
-          !others.some((seat) => seat.status === "active" && isOwner(seat))
-        ) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: others.some((seat) => seat.status === "active")
-              ? "You're the only owner. Make somebody else the owner before you leave."
-              : "You're the only owner and nobody has accepted their invite yet, so there's nobody to hand the group to. Remove the seats you invited, then leave.",
-          });
-        }
-
-        const { writtenOff } = await retireSeat(tx, {
-          actorMemberId: member.id,
-          groupId,
-          isoCurrencyCode: group.isoCurrencyCode,
-          target: { id: member.id, displayName: member.displayName },
-          voice: "self",
-          writeOffBalance,
-        });
-
-        // Point them somewhere they can still act. Null rather than a guess:
-        // `resolveActiveMember` falls back to their oldest remaining seat, and
-        // bootstraps a fresh group only if they now hold none at all.
-        await setActiveGroup({ groupId: null, tx, userId: user.id });
-
-        return { groupId, writtenOff };
+      await retireSeat(tx, {
+        groupId,
+        isoCurrencyCode: group.isoCurrencyCode,
+        target: { id: member.id, displayName: member.displayName },
+        voice: "self",
       });
-    }),
+
+      // Point them somewhere they can still act. Null rather than a guess:
+      // `resolveActiveMember` falls back to their oldest remaining seat, and
+      // bootstraps a fresh group only if they now hold none at all.
+      await setActiveGroup({ groupId: null, tx, userId: user.id });
+
+      return { groupId };
+    });
+  }),
 });

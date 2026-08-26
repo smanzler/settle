@@ -44,21 +44,6 @@ describe("buildShares", () => {
     expect(buildShares(10_001, split)).toEqual(buildShares(10_001, split));
   });
 
-  it("divides by weight", () => {
-    expect(
-      buildShares(10_000, {
-        mode: "weights",
-        parts: [
-          { memberId: "a", weight: 3 },
-          { memberId: "b", weight: 1 },
-        ],
-      }),
-    ).toEqual([
-      { memberId: "a", amountCents: 7500 },
-      { memberId: "b", amountCents: 2500 },
-    ]);
-  });
-
   it("passes an exact split straight through", () => {
     const parts = [
       { memberId: "a", amountCents: 5000 },

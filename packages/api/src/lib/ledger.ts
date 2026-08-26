@@ -6,7 +6,7 @@ import { LedgerEntries } from "../db/schema";
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** Anything that can run a statement — the pool, or one transaction on it. */
-export type Executor = Pick<typeof db, "execute"> | Tx;
+type Executor = Pick<typeof db, "execute"> | Tx;
 
 /**
  * A member's net position, signed the way the ledger stores it: **positive means
@@ -80,13 +80,13 @@ export const lockExpense = async (
  *
  * An advisory lock only excludes other holders of the same advisory lock, so a
  * writer that skips this is invisible to every writer that takes it. That is not
- * a theoretical gap: `retireSeat` decides what to write by reading the balances,
- * and an expense committing between its read and its write strands a debt on a
- * seat that has just been retired — a state no procedure can settle, and one
- * that both `assertGroupIntegrity` and `verifyLedger` call healthy, because an
- * expense is itself zero-sum and the documents and the ledger agree.
+ * a theoretical gap: `retireSeat` refuses to retire a seat that still owes
+ * something, and it decides that by reading the balances. An expense committing
+ * between its read and its retirement strands a debt on a seat that has just
+ * left — a state no procedure can settle, and one `assertGroupIntegrity` calls
+ * healthy, because an expense is itself zero-sum.
  *
- * Group-wide rather than per-expense because the write-off's read spans the
+ * Group-wide rather than per-expense because the retirement's read spans the
  * whole group. Write volume here is a few rows per household per day, so
  * serializing all of it costs nothing worth measuring.
  *
@@ -332,86 +332,4 @@ export const assertGroupIntegrity = async (tx: Tx, groupId: string) => {
       `group ${groupId} ledger does not sum to zero: ${imbalance}`,
     );
   }
-};
-
-/**
- * The insurance an append-only projection otherwise lacks.
- *
- * `ledger_entries` is only correct if no post or reversal was ever missed.
- * `assertGroupIntegrity` catches a *lopsided* event; this catches an event that
- * was skipped or double-posted symmetrically, which sums to zero and is
- * therefore invisible to it.
- *
- * Recomputes each member's position from the documents themselves — the current
- * version of every live expense, plus every settlement that has not been voided
- * — and reports whoever disagrees. Read-only, and milliseconds at this scale:
- * run it in tests, expose it to the group owner, and put it on a nightly job.
- */
-export const verifyLedger = async (
-  groupId: string,
-  /**
-   * Defaults to a fresh connection because the procedure exposing this is a
-   * plain query. Pass a transaction handle to check work that has not committed
-   * yet — otherwise this reads the pre-transaction state and reports no drift,
-   * which reads exactly like success.
-   */
-  executor: Executor = db,
-) => {
-  const rows = await executor.execute<{
-    member_id: string;
-    target_cents: string;
-    posted_cents: string;
-  }>(sql`
-    with live_version as (
-      select ev.id, ev.expense_id
-      from expense_versions ev
-      join expenses e
-        on e.id = ev.expense_id
-       and e.current_version = ev.version
-       and e.deleted_at is null
-      where e.group_id = ${groupId}
-    ),
-    contribution as (
-      select p.member_id, sum(p.amount_cents)::bigint as cents
-      from expense_payers p
-      join live_version v on v.id = p.expense_version_id
-      group by 1
-      union all
-      select s.member_id, -sum(s.amount_cents)::bigint
-      from expense_shares s
-      join live_version v on v.id = s.expense_version_id
-      group by 1
-      union all
-      select from_member_id, sum(amount_cents)::bigint
-      from settlements
-      where group_id = ${groupId} and voided_at is null
-      group by 1
-      union all
-      select to_member_id, -sum(amount_cents)::bigint
-      from settlements
-      where group_id = ${groupId} and voided_at is null
-      group by 1
-    ),
-    target as (
-      select member_id, sum(cents)::bigint as cents from contribution group by 1
-    ),
-    posted as (
-      select member_id, sum(amount_cents)::bigint as cents
-      from ledger_entries
-      where group_id = ${groupId}
-      group by 1
-    )
-    select coalesce(t.member_id, p.member_id) as member_id,
-           coalesce(t.cents, 0)::text         as target_cents,
-           coalesce(p.cents, 0)::text         as posted_cents
-    from target t
-    full outer join posted p on p.member_id = t.member_id
-    where coalesce(t.cents, 0) <> coalesce(p.cents, 0)
-  `);
-
-  return rows.rows.map((row) => ({
-    memberId: row.member_id,
-    postedCents: Number(row.posted_cents),
-    targetCents: Number(row.target_cents),
-  }));
 };

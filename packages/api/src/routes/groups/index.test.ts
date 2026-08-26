@@ -5,7 +5,7 @@ import { dropScratchGroups } from "../../db/scratch";
 import { users } from "../../db/schema";
 import { createExpense } from "../../lib/expenses";
 import { ensureGroup } from "../../lib/group";
-import { listGroupBalances } from "../../lib/ledger";
+import { getGroupImbalance, listGroupBalances } from "../../lib/ledger";
 import { appRouter } from "../index";
 
 /**
@@ -165,10 +165,10 @@ describeDb("removing a member while an expense is posting", () => {
     const me = alice.group.myMemberId;
 
     // Both writers take `lockGroup`, so one of two things happens: the expense
-    // commits first and the removal refuses (Bob owes something) or writes it
-    // off, or the removal commits first and the expense is refused for naming a
-    // retired seat. What must never happen is a removed seat left owing money —
-    // no procedure can settle that, and every integrity check calls it healthy.
+    // commits first and the removal refuses because Bob now owes something, or
+    // the removal commits first and the expense is refused for naming a retired
+    // seat. What must never happen is a removed seat left owing money — no
+    // procedure can settle that, and the zero-sum check calls it healthy.
     const outcomes = await Promise.allSettled([
       createExpense({
         actorMemberId: me,
@@ -181,10 +181,7 @@ describeDb("removing a member while an expense is posting", () => {
           split: { memberIds: [me, invite.memberId], mode: "equal" },
         },
       }),
-      alice.caller.groups.removeMember({
-        memberId: invite.memberId,
-        writeOffBalance: true,
-      }),
+      alice.caller.groups.removeMember({ memberId: invite.memberId }),
     ]);
 
     expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(
@@ -201,9 +198,6 @@ describeDb("removing a member while an expense is posting", () => {
       expect(balance.netCents).toBe(0);
     }
 
-    expect(await alice.caller.balances.verify()).toEqual({
-      drift: [],
-      imbalance: 0,
-    });
+    expect(await getGroupImbalance(alice.group.id)).toBe(0);
   });
 });
