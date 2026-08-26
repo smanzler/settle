@@ -5,7 +5,6 @@ import {
 } from "fastify-type-provider-zod";
 import fastifyCors from "@fastify/cors";
 import { authRoutes } from "./routes/auth";
-import { plaidWebhookRoutes } from "./routes/plaid/webhook";
 import { env } from "./env";
 import {
   fastifyTRPCPlugin,
@@ -14,7 +13,6 @@ import {
 import { appRouter, type AppRouter } from "./routes";
 import { createContext } from "./lib/trpc";
 import "./lib/boss";
-import "./lib/plaid-queue";
 
 const server = fastify({ routerOptions: { maxParamLength: 5000 } });
 
@@ -42,7 +40,6 @@ server.register(fastifyTRPCPlugin, {
 });
 
 server.register(authRoutes);
-server.register(plaidWebhookRoutes);
 
 server.listen({ port: env.PORT, host: "0.0.0.0" }, (err, address) => {
   if (err) {

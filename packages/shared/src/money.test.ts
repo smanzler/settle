@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocate, equalParts, fromCents, toCents } from "./money";
+import { allocate, equalParts, fromCents } from "./money";
 
 const ids = (n: number) =>
   Array.from({ length: n }, (_, i) => `m${String(i).padStart(2, "0")}`);
@@ -13,44 +13,12 @@ const lcg = (seed: number) => () => {
   return seed / 2 ** 32;
 };
 
-describe("toCents", () => {
-  it("reads both the padded and unpadded forms", () => {
-    // The column round-trips "20.00"; plaid-sync writes String(20) as "20".
-    expect(toCents("20.00")).toBe(2000);
-    expect(toCents("20")).toBe(2000);
-    expect(toCents("20.5")).toBe(2050);
-  });
-
-  it("keeps sign and small magnitudes", () => {
-    expect(toCents("-12.34")).toBe(-1234);
-    expect(toCents("0.07")).toBe(7);
-    expect(toCents("-0.01")).toBe(-1);
-  });
-
-  it("never returns -0, which would compare unequal to 0", () => {
-    expect(Object.is(toCents("-0.00"), 0)).toBe(true);
-  });
-
-  it("survives the amounts float math would corrupt", () => {
-    // Number("10.07") * 100 is 1006.9999999999999.
-    expect(toCents("10.07")).toBe(1007);
-    expect(toCents("1234567890.12")).toBe(123456789012);
-  });
-
-  it("throws rather than guessing", () => {
-    // An empty string is the dangerous one: Number("") is 0, so a silent
-    // parse would post a $0.00 share instead of failing.
-    expect(() => toCents("")).toThrow();
-    expect(() => toCents("abc")).toThrow();
-    expect(() => toCents("1.234")).toThrow();
-  });
-});
-
 describe("fromCents", () => {
-  it("round-trips through toCents", () => {
-    for (const cents of [0, 1, -1, 7, 2000, -123456, 123456789012]) {
-      expect(toCents(fromCents(cents))).toBe(cents);
-    }
+  it("refuses anything that is not an integer cent amount", () => {
+    expect(() => fromCents(12.5)).toThrow(/integer cent/);
+    expect(() => fromCents(Number.MAX_SAFE_INTEGER + 2)).toThrow(
+      /integer cent/,
+    );
   });
 
   it("pads the fractional part", () => {

@@ -38,28 +38,6 @@ export const formatSignedCents = (
 };
 
 /**
- * A pair balance as a sentence.
- *
- * `cents` is signed from **your** side, the way `balances.summary` and
- * `balances.activity` both state it: positive means they owe you.
- */
-export const formatOwes = ({
-  name,
-  cents,
-  currency,
-}: {
-  name: string;
-  cents: number;
-  currency?: string | null;
-}): string => {
-  if (cents === 0) return "You're settled up";
-
-  return cents > 0
-    ? `${name} owes you ${formatCents(cents, currency)}`
-    : `You owe ${name} ${formatCents(-cents, currency)}`;
-};
-
-/**
  * What was typed into a money field, back to integer cents.
  *
  * Deliberately not the shared `toCents`, which is strict because it parses a

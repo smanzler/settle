@@ -6,7 +6,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { expo } from "@better-auth/expo";
 import { emailOTP } from "better-auth/plugins";
 import * as schema from "../db/auth-schema";
-import { ensureHousehold } from "./household";
+import { ensureGroup } from "./group";
 import { sendEmail } from "./mailer";
 import { renderOtpEmail } from "./otp-email";
 
@@ -37,18 +37,18 @@ export const auth = betterAuth({
     user: {
       create: {
         /**
-         * Give every new user a household immediately, so the very first
-         * request already has a member seat to act as.
+         * Give every new user a group immediately, so the very first request
+         * already has a member seat to act as.
          *
          * Deliberately non-fatal: a failure here must not block sign-up, and
-         * `householdProcedure` bootstraps lazily anyway. This hook exists so
-         * the common path does not pay for it on first request.
+         * `groupProcedure` bootstraps lazily anyway. This hook exists so the
+         * common path does not pay for it on first request.
          */
         after: async (user) => {
           try {
-            await ensureHousehold(user);
+            await ensureGroup(user);
           } catch (err) {
-            console.error("failed to bootstrap household on signup:", err);
+            console.error("failed to bootstrap a group on signup:", err);
           }
         },
       },

@@ -1,358 +1,675 @@
-import { eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
+import { buildShares, type ExpenseInput } from "@budget/shared";
+import { sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
-import { relations } from "../db/relations";
+import db from "../db";
+import { createScratchGroup, dropScratchGroups } from "../db/scratch";
+import { Settlements } from "../db/schema";
+import { createExpense, deleteExpense, reviseExpense } from "./expenses";
 import {
-  BankAccounts,
-  HouseholdMembers,
-  Households,
-  LedgerEntries,
-  TransactionSplits,
-  Transactions,
-  PlaidItems,
-  users,
-} from "../db/schema";
-import { postShareDeltas, shareRef, verifyLedger } from "./ledger";
+  getGroupImbalance,
+  listGroupBalances,
+  postSettlement,
+  reverseSettlement,
+  verifyLedger,
+} from "./ledger";
 
 /**
- * These exercise real SQL — a full outer join, an upsert-free append, and an
- * aggregate — so a mock would only test the mock. They need a live Postgres
- * with the migrations applied, which CI does not have, so they are opt-in:
+ * These exercise the real invariants — an append-only table, a trigger, a row
+ * lock and a signed aggregate — so a mock would only test the mock. They need a
+ * live Postgres with the migrations applied, which CI does not have, so they are
+ * opt-in:
  *
- *   INTEGRATION_DATABASE_URL=postgresql://budget:...@localhost:5432/budget pnpm test
+ *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:5432/budget pnpm --filter @budget/api test
  *
- * Every test runs inside a transaction that is always rolled back, so pointing
- * this at a development database does not write to it.
+ * Every group they create is dropped in `afterAll`, so a development database is
+ * a safe target.
  */
-const url = process.env.INTEGRATION_DATABASE_URL;
+const enabled = Boolean(process.env.INTEGRATION_DATABASE_URL);
+const describeDb = enabled ? describe : describe.skip;
 
-const db = url ? drizzle(url, { relations }) : null;
+const groupIds: string[] = [];
 
 afterAll(async () => {
-  await db?.$client.end();
+  if (!enabled) return;
+
+  await dropScratchGroups(groupIds);
+  await db.$client.end();
 });
 
-const ROLLBACK = Symbol("rollback");
+const scratch = async (memberNames: readonly string[]) => {
+  const group = await createScratchGroup({ memberNames, name: "ledger test" });
+  groupIds.push(group.groupId);
 
-/** Runs `body` against a scratch household, then rolls the whole thing back. */
-const inScratchHousehold = async (
-  body: (ctx: {
-    tx: Parameters<Parameters<NonNullable<typeof db>["transaction"]>[0]>[0];
-    householdId: string;
-    simon: string;
-    ana: string;
-    charge: { id: string; ref: string };
-    refund: { id: string; ref: string };
-  }) => Promise<void>,
-) => {
-  if (!db) throw new Error("no database");
-
-  try {
-    await db.transaction(async (tx) => {
-      const [household] = await tx
-        .insert(Households)
-        .values({ name: "ledger test" })
-        .returning();
-      const [simon] = await tx
-        .insert(HouseholdMembers)
-        .values({
-          householdId: household!.id,
-          displayName: "Simon",
-          role: "owner",
-          status: "active",
-        })
-        .returning();
-      const [ana] = await tx
-        .insert(HouseholdMembers)
-        .values({
-          householdId: household!.id,
-          displayName: "Ana",
-          status: "active",
-        })
-        .returning();
-
-      // plaid_items.user_id is a real FK; any user will do for a scratch row.
-      const [user] = await tx.select({ id: users.id }).from(users).limit(1);
-      const [item] = await tx
-        .insert(PlaidItems)
-        .values({
-          householdId: household!.id,
-          userId: user!.id,
-          ownerMemberId: simon!.id,
-          plaidItemId: `test-${household!.id}`,
-          accessToken: "x",
-        })
-        .returning();
-      const [account] = await tx
-        .insert(BankAccounts)
-        .values({
-          householdId: household!.id,
-          plaidItemId: item!.id,
-          ownerMemberId: simon!.id,
-          plaidAccountId: `acct-${household!.id}`,
-          name: "Amex",
-        })
-        .returning();
-
-      const make = async (suffix: string, amount: string, date: string) => {
-        const [row] = await tx
-          .insert(Transactions)
-          .values({
-            householdId: household!.id,
-            bankAccountId: account!.id,
-            creditorMemberId: simon!.id,
-            plaidTransactionId: `ptx-${household!.id}-${suffix}`,
-            amount,
-            date,
-            name: "Luigi's",
-            isoCurrencyCode: "USD",
-          })
-          .returning();
-
-        return { id: row!.id, ref: shareRef(row!.plaidTransactionId) };
-      };
-
-      await body({
-        tx,
-        householdId: household!.id,
-        simon: simon!.id,
-        ana: ana!.id,
-        charge: await make("charge", "100.00", "2026-08-03"),
-        refund: await make("refund", "-100.00", "2026-09-12"),
-      });
-
-      throw ROLLBACK;
-    });
-  } catch (err) {
-    if (err !== ROLLBACK) throw err;
-  }
+  return group;
 };
 
-describe.skipIf(!url)("postShareDeltas", () => {
-  it("posts, is idempotent, and only ever appends the difference", async () => {
-    await inScratchHousehold(async (ctx) => {
-      const post = (cents: number | null) =>
-        postShareDeltas(ctx.tx, {
-          householdId: ctx.householdId,
-          targets: [
-            {
-              externalRef: ctx.charge.ref,
-              transactionId: ctx.charge.id,
-              memo: "Luigi's",
-              effectiveDate: "2026-08-03",
-              isoCurrencyCode: "USD",
-              pairs:
-                cents === null
-                  ? []
-                  : [
-                      {
-                        debtorMemberId: ctx.ana,
-                        creditorMemberId: ctx.simon,
-                        cents,
-                      },
-                    ],
-            },
+/** Every member's net position, keyed by display name. */
+const nets = async (
+  groupId: string,
+  members: Record<string, string>,
+): Promise<Record<string, number>> => {
+  const balances = await listGroupBalances(groupId);
+  const names = Object.fromEntries(
+    Object.entries(members).map(([name, id]) => [id, name]),
+  );
+
+  return Object.fromEntries(
+    balances.map((balance) => [names[balance.memberId], balance.netCents]),
+  );
+};
+
+/**
+ * The check that runs after every scenario. `imbalance` is the invariant itself;
+ * `verifyLedger` catches an event that was skipped or posted twice symmetrically,
+ * which sums to zero and is therefore invisible to `imbalance` alone.
+ */
+const expectHealthy = async (groupId: string) => {
+  expect(await getGroupImbalance(groupId)).toBe(0);
+  expect(await verifyLedger(groupId)).toEqual([]);
+};
+
+/**
+ * Every message in an error's cause chain.
+ *
+ * Drizzle wraps a failed statement in a `Failed query: ...` error and hangs the
+ * driver's own error — the one carrying the trigger's text — off `cause`.
+ */
+const messageChain = (error: unknown): string => {
+  const parts: string[] = [];
+
+  for (let current = error; current instanceof Error; current = current.cause) {
+    parts.push(current.message);
+  }
+
+  return parts.join(" | ");
+};
+
+const expectRefused = async (statement: Promise<unknown>, pattern: RegExp) => {
+  let caught: unknown;
+
+  try {
+    await statement;
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught, "the statement was not refused").toBeDefined();
+  expect(messageChain(caught)).toMatch(pattern);
+};
+
+const dinner = (
+  overrides: Partial<ExpenseInput> & Pick<ExpenseInput, "payers" | "split">,
+): ExpenseInput => ({
+  amountCents: 6000,
+  description: "Dinner",
+  expenseDate: "2026-08-03",
+  ...overrides,
+});
+
+describeDb("posting an expense", () => {
+  it("credits the payer and debits every participant", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!, Carol!] },
+      }),
+    });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 4000,
+      Bob: -2000,
+      Carol: -2000,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("handles two payers on one expense", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [
+          { memberId: Alice!, amountCents: 4000 },
+          { memberId: Bob!, amountCents: 2000 },
+        ],
+        split: { mode: "equal", memberIds: [Alice!, Bob!, Carol!] },
+      }),
+    });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 2000,
+      Bob: 0,
+      Carol: -2000,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("handles shares that are not equal", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        amountCents: 10_000,
+        payers: [{ memberId: Alice!, amountCents: 10_000 }],
+        split: {
+          mode: "exact",
+          parts: [
+            { memberId: Alice!, amountCents: 5000 },
+            { memberId: Bob!, amountCents: 3000 },
+            { memberId: Carol!, amountCents: 2000 },
           ],
-        });
-
-      // Deliberately order-independent: `created_at` defaults to now(), which
-      // in Postgres is transaction-start time, so every entry written inside
-      // one transaction shares it and the uuid tiebreak is arbitrary. What
-      // matters is that rows are only ever added and the total lands on target.
-      const amounts = async () =>
-        (
-          await ctx.tx
-            .select()
-            .from(LedgerEntries)
-            .where(eq(LedgerEntries.householdId, ctx.householdId))
-        )
-          .map((entry) => entry.amountCents)
-          .sort((a, b) => a - b);
-
-      const total = async () =>
-        (await amounts()).reduce((sum, cents) => sum + cents, 0);
-
-      await post(5000);
-      expect(await amounts()).toEqual([5000]);
-
-      // The property the whole design rests on.
-      await post(5000);
-      expect(await amounts()).toEqual([5000]);
-
-      // An edit appends the delta rather than rewriting history.
-      await post(3000);
-      expect(await amounts()).toEqual([-2000, 5000]);
-      expect(await total()).toBe(3000);
-
-      await post(5000);
-      expect(await amounts()).toEqual([-2000, 2000, 5000]);
-      expect(await total()).toBe(5000);
-
-      // A Plaid delete: reverse to exactly zero, without deleting anything.
-      await post(null);
-      expect(await total()).toBe(0);
-      expect(await amounts()).toHaveLength(4);
-    });
-  });
-
-  it("nets a refund against its charge through the sign alone", async () => {
-    await inScratchHousehold(async (ctx) => {
-      await postShareDeltas(ctx.tx, {
-        householdId: ctx.householdId,
-        targets: [
-          {
-            externalRef: ctx.charge.ref,
-            transactionId: ctx.charge.id,
-            memo: "Luigi's",
-            effectiveDate: "2026-08-03",
-            isoCurrencyCode: "USD",
-            pairs: [
-              {
-                debtorMemberId: ctx.ana,
-                creditorMemberId: ctx.simon,
-                cents: 5000,
-              },
-            ],
-          },
-          {
-            externalRef: ctx.refund.ref,
-            transactionId: ctx.refund.id,
-            memo: "Luigi's refund",
-            effectiveDate: "2026-09-12",
-            isoCurrencyCode: "USD",
-            pairs: [
-              {
-                debtorMemberId: ctx.ana,
-                creditorMemberId: ctx.simon,
-                cents: -5000,
-              },
-            ],
-          },
-        ],
-      });
-
-      const [net] = await ctx.tx
-        .select({ sum: sql<string>`sum(${LedgerEntries.amountCents})::text` })
-        .from(LedgerEntries)
-        .where(eq(LedgerEntries.householdId, ctx.householdId));
-
-      expect(net!.sum).toBe("0");
-    });
-  });
-
-  it("reverses only the ref it was told about", async () => {
-    await inScratchHousehold(async (ctx) => {
-      const target = (
-        ref: string,
-        transactionId: string,
-        date: string,
-        cents: number | null,
-      ) => ({
-        externalRef: ref,
-        transactionId,
-        memo: "Luigi's",
-        effectiveDate: date,
-        isoCurrencyCode: "USD",
-        pairs:
-          cents === null
-            ? []
-            : [
-                {
-                  debtorMemberId: ctx.ana,
-                  creditorMemberId: ctx.simon,
-                  cents,
-                },
-              ],
-      });
-
-      await postShareDeltas(ctx.tx, {
-        householdId: ctx.householdId,
-        targets: [
-          target(ctx.charge.ref, ctx.charge.id, "2026-08-03", 5000),
-          target(ctx.refund.ref, ctx.refund.id, "2026-09-12", -5000),
-        ],
-      });
-
-      await postShareDeltas(ctx.tx, {
-        householdId: ctx.householdId,
-        targets: [target(ctx.charge.ref, ctx.charge.id, "2026-08-03", null)],
-      });
-
-      const sums = await ctx.tx
-        .select({
-          ref: LedgerEntries.externalRef,
-          sum: sql<string>`sum(${LedgerEntries.amountCents})::text`,
-        })
-        .from(LedgerEntries)
-        .where(eq(LedgerEntries.householdId, ctx.householdId))
-        .groupBy(LedgerEntries.externalRef);
-
-      expect(Object.fromEntries(sums.map((row) => [row.ref, row.sum]))).toEqual(
-        {
-          [ctx.charge.ref]: "0",
-          [ctx.refund.ref]: "-5000",
         },
-      );
+      }),
     });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 5000,
+      Bob: -3000,
+      Carol: -2000,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("handles a payer who is not a participant", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Bob!, Carol!] },
+      }),
+    });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 6000,
+      Bob: -3000,
+      Carol: -3000,
+    });
+    await expectHealthy(groupId);
   });
 });
 
-describe.skipIf(!url)("verifyLedger", () => {
-  it("detects a split that was never posted, and converges in one call", async () => {
-    await inScratchHousehold(async (ctx) => {
-      await ctx.tx.insert(TransactionSplits).values([
-        {
-          householdId: ctx.householdId,
-          transactionId: ctx.charge.id,
-          memberId: ctx.simon,
-          weight: 1,
-          amountCents: 5000,
-        },
-        {
-          householdId: ctx.householdId,
-          transactionId: ctx.charge.id,
-          memberId: ctx.ana,
-          weight: 1,
-          amountCents: 5000,
-        },
-      ]);
+describeDb("the append-only guarantee", () => {
+  it("refuses a direct UPDATE", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
 
-      const drift = await verifyLedger(ctx.householdId, ctx.tx);
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
 
-      expect(drift).toEqual([
-        {
-          externalRef: ctx.charge.ref,
-          debtorMemberId: ctx.ana,
-          creditorMemberId: ctx.simon,
-          targetCents: 5000,
-          postedCents: 0,
-          // The transaction is still here — this is a genuinely missed post,
-          // not a ref left behind by a purge.
-          detached: false,
-        },
-      ]);
+    await expectRefused(
+      db.execute(
+        sql`update ledger_entries set amount_cents = 1 where group_id = ${groupId}`,
+      ),
+      /append-only/,
+    );
+  });
 
-      await postShareDeltas(ctx.tx, {
-        householdId: ctx.householdId,
-        targets: [
-          {
-            externalRef: ctx.charge.ref,
-            transactionId: ctx.charge.id,
-            memo: "Luigi's",
-            effectiveDate: "2026-08-03",
-            isoCurrencyCode: "USD",
-            pairs: [
-              {
-                debtorMemberId: ctx.ana,
-                creditorMemberId: ctx.simon,
-                cents: 5000,
-              },
-            ],
-          },
-        ],
+  it("refuses a direct DELETE", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await expectRefused(
+      db.execute(sql`delete from ledger_entries where group_id = ${groupId}`),
+      /append-only/,
+    );
+  });
+});
+
+describeDb("revising an expense", () => {
+  it("moves every balance to the new amount", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+    const everyone = [Alice!, Bob!, Carol!];
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: everyone },
+      }),
+    });
+
+    const revised = await reviseExpense({
+      actorMemberId: Alice!,
+      expenseId,
+      groupId,
+      input: dinner({
+        amountCents: 7500,
+        note: "tip posted",
+        payers: [{ memberId: Alice!, amountCents: 7500 }],
+        split: { mode: "equal", memberIds: everyone },
+      }),
+    });
+
+    expect(revised.version).toBe(2);
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 5000,
+      Bob: -2500,
+      Carol: -2500,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("keeps every version on record across two revisions", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+    const everyone = [Alice!, Bob!, Carol!];
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: everyone },
+      }),
+    });
+
+    for (const amountCents of [7500, 7000]) {
+      await reviseExpense({
+        actorMemberId: Alice!,
+        expenseId,
+        groupId,
+        input: dinner({
+          amountCents,
+          payers: [{ memberId: Alice!, amountCents }],
+          split: { mode: "equal", memberIds: everyone },
+        }),
+      });
+    }
+
+    const versions = await db.execute<{ count: string }>(
+      sql`select count(*)::text as count from expense_versions where expense_id = ${expenseId}`,
+    );
+
+    expect(versions.rows[0]?.count).toBe("3");
+
+    // $70 three ways leaves an odd cent, and which member absorbs it depends on
+    // the uuids the scratch group happened to get. Deriving the expectation from
+    // the same allocator the server used is the point — a hardcoded number here
+    // would only test the fixture.
+    const shares = new Map(
+      buildShares(7000, { mode: "equal", memberIds: everyone }).map((share) => [
+        share.memberId,
+        share.amountCents,
+      ]),
+    );
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 7000 - shares.get(Alice!)!,
+      Bob: -shares.get(Bob!)!,
+      Carol: -shares.get(Carol!)!,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("handles the participant set changing", async () => {
+    const { groupId, members } = await scratch([
+      "Alice",
+      "Bob",
+      "Carol",
+      "Dave",
+    ]);
+    const { Alice, Bob, Carol, Dave } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!, Carol!] },
+      }),
+    });
+
+    await reviseExpense({
+      actorMemberId: Alice!,
+      expenseId,
+      groupId,
+      input: dinner({
+        note: "Carol wasn't there, Dave was",
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!, Dave!] },
+      }),
+    });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 4000,
+      Bob: -2000,
+      Carol: 0,
+      Dave: -2000,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("links every reversal to the entry it undoes", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await reviseExpense({
+      actorMemberId: Alice!,
+      expenseId,
+      groupId,
+      input: dinner({
+        amountCents: 7000,
+        payers: [{ memberId: Alice!, amountCents: 7000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    const reversals = await db.execute<{
+      amount_cents: string;
+      original_cents: string;
+    }>(sql`
+      select r.amount_cents::text as amount_cents,
+             o.amount_cents::text as original_cents
+      from ledger_entries r
+      join ledger_entries o on o.id = r.reverses_id
+      where r.group_id = ${groupId} and r.reverses_id is not null
+    `);
+
+    expect(reversals.rows).toHaveLength(3);
+    expect(
+      reversals.rows.every(
+        (row) => Number(row.amount_cents) === -Number(row.original_cents),
+      ),
+    ).toBe(true);
+    await expectHealthy(groupId);
+  });
+
+  it("refuses to revise a deleted expense", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    const input = dinner({
+      payers: [{ memberId: Alice!, amountCents: 6000 }],
+      split: { mode: "equal", memberIds: [Alice!, Bob!] },
+    });
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input,
+    });
+
+    await deleteExpense({ expenseId, groupId });
+
+    await expect(
+      reviseExpense({ actorMemberId: Alice!, expenseId, groupId, input }),
+    ).rejects.toThrow(/deleted/);
+  });
+});
+
+describeDb("deleting an expense", () => {
+  it("returns every member to where they were", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob", "Carol"]);
+    const { Alice, Bob, Carol } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!, Carol!] },
+      }),
+    });
+
+    await deleteExpense({ expenseId, groupId });
+
+    expect(await nets(groupId, members)).toEqual({
+      Alice: 0,
+      Bob: 0,
+      Carol: 0,
+    });
+    await expectHealthy(groupId);
+  });
+
+  it("is a no-op the second time", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await deleteExpense({ expenseId, groupId });
+    await deleteExpense({ expenseId, groupId });
+
+    expect(await nets(groupId, members)).toEqual({ Alice: 0, Bob: 0 });
+    await expectHealthy(groupId);
+  });
+});
+
+describeDb("settlements", () => {
+  const settle = async (args: {
+    groupId: string;
+    fromMemberId: string;
+    toMemberId: string;
+    amountCents: number;
+  }) =>
+    db.transaction(async (tx) => {
+      const [settlement] = await tx
+        .insert(Settlements)
+        .values({
+          amountCents: args.amountCents,
+          createdByMemberId: args.fromMemberId,
+          fromMemberId: args.fromMemberId,
+          groupId: args.groupId,
+          settledOn: "2026-08-04",
+          toMemberId: args.toMemberId,
+        })
+        .returning({ id: Settlements.id });
+
+      await postSettlement(tx, { ...args, settlementId: settlement!.id });
+
+      return settlement!.id;
+    });
+
+  it("moves both parties in opposite directions", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        amountCents: 5000,
+        payers: [{ memberId: Alice!, amountCents: 5000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await settle({
+      amountCents: 2500,
+      fromMemberId: Bob!,
+      groupId,
+      toMemberId: Alice!,
+    });
+
+    expect(await nets(groupId, members)).toEqual({ Alice: 0, Bob: 0 });
+    await expectHealthy(groupId);
+  });
+
+  it("flips the payer positive when they over-settle", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        amountCents: 5000,
+        payers: [{ memberId: Alice!, amountCents: 5000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await settle({
+      amountCents: 4000,
+      fromMemberId: Bob!,
+      groupId,
+      toMemberId: Alice!,
+    });
+
+    expect(await nets(groupId, members)).toEqual({ Alice: -1500, Bob: 1500 });
+    await expectHealthy(groupId);
+  });
+
+  it("restores the prior balances when reversed", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        amountCents: 5000,
+        payers: [{ memberId: Alice!, amountCents: 5000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    const settlementId = await settle({
+      amountCents: 2500,
+      fromMemberId: Bob!,
+      groupId,
+      toMemberId: Alice!,
+    });
+
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`update settlements set voided_at = now() where id = ${settlementId}`,
+      );
+      await reverseSettlement(tx, { groupId, settlementId });
+    });
+
+    expect(await nets(groupId, members)).toEqual({ Alice: 2500, Bob: -2500 });
+    await expectHealthy(groupId);
+  });
+
+  it("leaves a new balance behind when an expense is revised after settling", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        amountCents: 5000,
+        payers: [{ memberId: Alice!, amountCents: 5000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    await settle({
+      amountCents: 2500,
+      fromMemberId: Bob!,
+      groupId,
+      toMemberId: Alice!,
+    });
+
+    await reviseExpense({
+      actorMemberId: Alice!,
+      expenseId,
+      groupId,
+      input: dinner({
+        amountCents: 6000,
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    expect(await nets(groupId, members)).toEqual({ Alice: 500, Bob: -500 });
+    await expectHealthy(groupId);
+  });
+});
+
+describeDb("concurrent revisions", () => {
+  it("serializes on the expense row rather than corrupting the balance", async () => {
+    const { groupId, members } = await scratch(["Alice", "Bob"]);
+    const { Alice, Bob } = members;
+
+    const { expenseId } = await createExpense({
+      actorMemberId: Alice!,
+      groupId,
+      input: dinner({
+        payers: [{ memberId: Alice!, amountCents: 6000 }],
+        split: { mode: "equal", memberIds: [Alice!, Bob!] },
+      }),
+    });
+
+    const revise = (amountCents: number) =>
+      reviseExpense({
+        actorMemberId: Alice!,
+        expenseId,
+        groupId,
+        input: dinner({
+          amountCents,
+          payers: [{ memberId: Alice!, amountCents }],
+          split: { mode: "equal", memberIds: [Alice!, Bob!] },
+        }),
       });
 
-      expect(await verifyLedger(ctx.householdId, ctx.tx)).toEqual([]);
-    });
+    const outcomes = await Promise.allSettled([revise(7000), revise(8000)]);
+
+    // Both are allowed to win — the second simply revises what the first left.
+    // What must never happen is a double-reverse, a double-post, or two rows
+    // claiming to be the same version, and `verifyLedger` is blind to none of
+    // them: it recomputes the target from the live version alone.
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toEqual(
+      [],
+    );
+
+    const [expense] = (
+      await db.execute<{ current_version: number }>(
+        sql`select current_version from expenses where id = ${expenseId}`,
+      )
+    ).rows;
+
+    expect(expense?.current_version).toBe(3);
+    await expectHealthy(groupId);
   });
 });

@@ -1,1 +1,1 @@
-export { Transactions as default } from "@/features/transactions/screens/transactions";
+export { Expenses as default } from "@/features/expenses/screens/expenses";

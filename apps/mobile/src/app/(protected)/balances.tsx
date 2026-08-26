@@ -1,1 +1,1 @@
-export { Balances as default } from "@/features/household/screens/balances";
+export { Balances as default } from "@/features/group/screens/balances";

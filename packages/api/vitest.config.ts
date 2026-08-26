@@ -5,10 +5,9 @@ const testEnv: Record<keyof Env, string> = {
   BETTER_AUTH_SECRET: "test-secret",
   BETTER_AUTH_URL: "https://auth.test",
 
-  // Integration tests (`src/routes/scope.test.ts`, `src/lib/ledger.test.ts`)
-  // exercise procedures through the module-level `db` singleton, which reads
-  // this. Point it at a real database to run them; otherwise it stays a stub
-  // that nothing connects to and those suites skip themselves.
+  // The ledger integration suites exercise real SQL through the module-level
+  // `db` singleton, which reads this. Point it at a real database to run them;
+  // otherwise it stays a stub that nothing connects to and they skip themselves.
   DATABASE_URL:
     process.env.INTEGRATION_DATABASE_URL ??
     "postgres://test:test@localhost:5432/test",
@@ -29,14 +28,6 @@ const testEnv: Record<keyof Env, string> = {
   SMTP_FROM: "test@example.com",
 
   EXPO_ACCESS_TOKEN: "test-expo-access-token",
-
-  PLAID_CLIENT_ID: "test-plaid-client-id",
-  PLAID_SECRET: "test-plaid-secret",
-  PLAID_ENV: "sandbox",
-  PLAID_WEBHOOK_URL: "https://api.test/webhooks/plaid",
-
-  ENCRYPTION_KEY:
-    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
 };
 
 export default defineConfig({

@@ -1,18 +1,16 @@
 import { router } from "../lib/trpc";
 import { balancesRouter } from "./balances";
-import { householdRouter } from "./household";
+import { expensesRouter } from "./expenses";
+import { groupsRouter } from "./groups";
 import { notificationsRouter } from "./notifications";
-import { plaidRouter } from "./plaid";
 import { settlementsRouter } from "./settlements";
-import { transactionsRouter } from "./transactions";
 
 export const appRouter = router({
   balances: balancesRouter,
-  household: householdRouter,
+  expenses: expensesRouter,
+  groups: groupsRouter,
   notifications: notificationsRouter,
-  plaid: plaidRouter,
   settlements: settlementsRouter,
-  transactions: transactionsRouter,
 });
 
 export type AppRouter = typeof appRouter;

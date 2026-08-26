@@ -1,317 +1,417 @@
 import { sql } from "drizzle-orm";
 import db from "../db";
+import { LedgerEntries } from "../db/schema";
 
 /** The Drizzle transaction handle, as `db.transaction` hands it to a callback. */
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** A directed debt between two members, in Plaid's sign convention. */
-export type SharePair = {
-  debtorMemberId: string;
-  creditorMemberId: string;
-  /** Signed. Positive means the debtor consumed money the creditor put up. */
-  cents: number;
-};
-
-export type ShareTarget = {
-  /** `plaid:<plaidTransactionId>`. The idempotency key. */
-  externalRef: string;
-  /** Null once the underlying row is gone — a Plaid `removed`, or a purge. */
-  transactionId: string | null;
-  /** Frozen onto the entry so it still reads correctly after a purge. */
-  memo: string | null;
-  /** `YYYY-MM-DD`. Display and ordering only; balances never filter by date. */
-  effectiveDate: string;
-  isoCurrencyCode: string;
-  /**
-   * What the splits currently say. **Empty means reverse everything posted for
-   * this ref** — the deletion path.
-   */
-  pairs: SharePair[];
-};
-
-/** `plaid:<id>` — the only place this string is built. */
-export const shareRef = (plaidTransactionId: string) =>
-  `plaid:${plaidTransactionId}`;
-
-export const settlementRef = (settlementId: string) =>
-  `settlement:${settlementId}`;
+/** Anything that can run a statement — the pool, or one transaction on it. */
+export type Executor = Pick<typeof db, "execute"> | Tx;
 
 /**
- * A transaction's shares, as a target.
- *
- * Everything but `pairs` is identity rather than data: the ref is what makes a
- * re-post idempotent, and memo, date and currency are frozen onto the entries
- * so they still read correctly once the transaction row is gone. Restating
- * those per call site is how two writers post the same share under different
- * metadata — a drift `verifyLedger` cannot see, because it only compares cents.
- *
- * `transactionId` is `null` for a row that is about to be deleted; pass the
- * household's default currency, which is what an entry falls back to when the
- * transaction never carried one.
+ * A member's net position, signed the way the ledger stores it: **positive means
+ * the group owes them; negative means they owe the group.**
  */
-export const shareTargetFor = (
-  transaction: {
-    id: string | null;
-    plaidTransactionId: string;
-    name: string;
-    merchantName: string | null;
-    date: string;
-    isoCurrencyCode: string | null;
-  },
-  defaultCurrency: string,
-  pairs: SharePair[],
-): ShareTarget => ({
-  externalRef: shareRef(transaction.plaidTransactionId),
-  transactionId: transaction.id,
-  memo: transaction.merchantName ?? transaction.name,
-  effectiveDate: transaction.date,
-  isoCurrencyCode: transaction.isoCurrencyCode ?? defaultCurrency,
-  pairs,
-});
+export type Balance = { memberId: string; netCents: number };
+
+type PendingEntry = typeof LedgerEntries.$inferInsert;
 
 /**
- * Converges `ledger_entries` onto `targets` by appending **only the difference**
- * between what the splits now say and what has already been posted.
+ * Every event sums to zero — checked in the application layer, because nothing
+ * in the database can express it.
  *
- * This is the single write path for share entries, and every caller is the same
- * call:
- *
- *   new transaction   → nothing posted, target is the default split
- *   user edits split  → deltas move cents between pairs
- *   Plaid amount move → deltas absorb the difference
- *   account moved     → the old pair drains to 0, the new one fills
- *   Plaid `removed`   → empty target, every posted pair reversed to exactly 0
- *
- * Idempotent by construction: a second call computes a delta of zero for every
- * pair and the `WHERE ... <> 0` filter inserts nothing.
- *
- * Takes refs and targets rather than a transaction id, because the two cases
- * the ref key exists for — a deleted transaction and a purged item — have no
- * transaction row left to re-derive a target from. Callers compute the target.
+ * The database cannot express "these rows, together, sum to zero" — a CHECK is
+ * per row and a trigger cannot see a whole statement's worth of inserts. So the
+ * invariant that every other guarantee rests on is asserted here, on every
+ * single write path, and the group-wide sum in `assertGroupIntegrity` is the
+ * independent check that it was never skipped.
  */
-export const postShareDeltas = async (
+const assertZeroSum = (entries: readonly PendingEntry[], context: string) => {
+  const total = entries.reduce((sum, entry) => sum + entry.amountCents, 0);
+
+  if (total !== 0) {
+    throw new Error(`ledger event does not sum to zero (${context}): ${total}`);
+  }
+};
+
+/**
+ * Reads an expense's mutable head under a row lock, for a caller that is about
+ * to revise or delete it.
+ *
+ * `reviseExpense` is reverse-then-post, and Drizzle runs at READ COMMITTED, so
+ * two concurrent revisions would both read the same `current_version`, both
+ * reverse it, and both post a new one — a silently doubled balance and two rows
+ * claiming to be version N+1. `lockGroup` already excludes the second writer;
+ * `FOR UPDATE` is the narrower guarantee stated where it is relied on, so this
+ * stays correct on its own terms if a future caller reaches it directly.
+ *
+ * Returns `undefined` for an expense that is not in this group, which is the
+ * not-found answer every caller wants.
+ */
+export const lockExpense = async (
+  tx: Tx,
+  args: { expenseId: string; groupId: string },
+) => {
+  const locked = await tx.execute<{
+    id: string;
+    current_version: number;
+    deleted_at: Date | null;
+  }>(sql`
+    select id, current_version, deleted_at
+    from expenses
+    where id = ${args.expenseId} and group_id = ${args.groupId}
+    for update
+  `);
+
+  const [row] = locked.rows;
+
+  return row
+    ? {
+        id: row.id,
+        currentVersion: row.current_version,
+        deletedAt: row.deleted_at,
+      }
+    : undefined;
+};
+
+/**
+ * Serializes every writer in one group, and **must be the first statement** of
+ * any transaction that appends to the ledger.
+ *
+ * An advisory lock only excludes other holders of the same advisory lock, so a
+ * writer that skips this is invisible to every writer that takes it. That is not
+ * a theoretical gap: `retireSeat` decides what to write by reading the balances,
+ * and an expense committing between its read and its write strands a debt on a
+ * seat that has just been retired — a state no procedure can settle, and one
+ * that both `assertGroupIntegrity` and `verifyLedger` call healthy, because an
+ * expense is itself zero-sum and the documents and the ledger agree.
+ *
+ * Group-wide rather than per-expense because the write-off's read spans the
+ * whole group. Write volume here is a few rows per household per day, so
+ * serializing all of it costs nothing worth measuring.
+ *
+ * Taken before any row lock, everywhere, so the lock order cannot deadlock.
+ */
+export const lockGroup = (tx: Tx, groupId: string) =>
+  tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${groupId}, 0))`,
+  );
+
+/**
+ * Posts an expense version: one `paid` entry per payer, one `share` entry per
+ * participant.
+ *
+ * `+A` from the payers and `-A` from the shares, so the set sums to zero by
+ * construction. A member who both paid and consumed gets one of each rather than
+ * a netted single row — the two facts are separately true, and the revision
+ * history has to be able to state them separately.
+ */
+export const postExpenseVersion = async (
   tx: Tx,
   args: {
-    householdId: string;
-    targets: ShareTarget[];
-    actorMemberId?: string | null;
+    groupId: string;
+    expenseId: string;
+    version: number;
+    payers: readonly { memberId: string; amountCents: number }[];
+    shares: readonly { memberId: string; amountCents: number }[];
   },
 ) => {
-  if (args.targets.length === 0) return;
+  const common = {
+    groupId: args.groupId,
+    sourceType: "expense" as const,
+    sourceId: args.expenseId,
+    sourceVersion: args.version,
+  };
 
-  await lockHousehold(tx, args.householdId);
-
-  // Two separate JSON payloads rather than one denormalized rowset: a reversal
-  // has no pairs at all, and it still needs a memo, date and currency to freeze
-  // onto the reversing entry.
-  //
-  // `ref_meta` MUST hold at most one row per ref. It is joined onto the delta
-  // below, so a repeated `external_ref` would multiply every computed delta by
-  // however many times it appeared — a doubled debt, not a doubled no-op. Two
-  // targets for one ref are reachable: Plaid can return the same transaction in
-  // `modified` and in `removed` within a single sync response, which produces a
-  // share target and a reversal target for the same key. Last target wins,
-  // matching the order callers apply them in.
-  //
-  // The pairs are deduped alongside the refs rather than accumulated across
-  // duplicates: a reversal's empty `pairs` is a statement about the whole ref,
-  // and merging it with a stale target's pairs would re-post the very shares it
-  // exists to undo.
-  const targets = [
-    ...new Map(
-      args.targets.map((target) => [target.externalRef, target]),
-    ).values(),
+  const entries: PendingEntry[] = [
+    ...args.payers.map((payer) => ({
+      ...common,
+      memberId: payer.memberId,
+      amountCents: payer.amountCents,
+      entryType: "paid" as const,
+    })),
+    ...args.shares
+      // A zero share is a real statement about a participant and a non-statement
+      // about money. The CHECK on the column refuses it; dropping it here is
+      // what makes the CHECK enforceable rather than an obstacle.
+      .filter((share) => share.amountCents !== 0)
+      .map((share) => ({
+        ...common,
+        memberId: share.memberId,
+        amountCents: -share.amountCents,
+        entryType: "share" as const,
+      })),
   ];
 
-  const refs = targets.map((target) => ({
-    external_ref: target.externalRef,
-    transaction_id: target.transactionId,
-    memo: target.memo,
-    effective_date: target.effectiveDate,
-    iso_currency_code: target.isoCurrencyCode,
-  }));
+  assertZeroSum(entries, `expense ${args.expenseId} v${args.version}`);
 
-  const pairs = targets.flatMap((target) =>
-    target.pairs
-      // A zero-cent share is not a debt; letting one through would trip the
-      // `amount_cents <> 0` CHECK for no gain.
-      .filter((pair) => pair.cents !== 0)
-      .map((pair) => ({
-        external_ref: target.externalRef,
-        debtor_member_id: pair.debtorMemberId,
-        creditor_member_id: pair.creditorMemberId,
-        cents: pair.cents,
-      })),
-  );
-
-  // One statement for the whole delta. A per-row version would be two round
-  // trips per transaction across up to ~8,000 rows on a first sync
-  // (DAYS_REQUESTED is 730), inside an open write transaction, against a 20s
-  // syncNow budget.
-  await tx.execute(sql`
-    with ref_meta as (
-      select * from json_to_recordset(${JSON.stringify(refs)}::json) as x(
-        external_ref text,
-        transaction_id uuid,
-        memo text,
-        effective_date date,
-        iso_currency_code text
-      )
-    ),
-    target_pair as (
-      select external_ref, debtor_member_id, creditor_member_id,
-             sum(cents)::bigint as cents
-      from json_to_recordset(${JSON.stringify(pairs)}::json) as y(
-        external_ref text,
-        debtor_member_id uuid,
-        creditor_member_id uuid,
-        cents bigint
-      )
-      group by 1, 2, 3
-    ),
-    posted as (
-      select external_ref, debtor_member_id, creditor_member_id,
-             sum(amount_cents)::bigint as cents
-      from ledger_entries
-      where household_id = ${args.householdId}
-        and kind = 'share'
-        and external_ref in (select external_ref from ref_meta)
-      group by 1, 2, 3
-    )
-    insert into ledger_entries (
-      household_id, debtor_member_id, creditor_member_id, amount_cents,
-      iso_currency_code, kind, external_ref, transaction_id, memo,
-      effective_date, created_by_member_id
-    )
-    select
-      ${args.householdId},
-      coalesce(t.debtor_member_id, p.debtor_member_id),
-      coalesce(t.creditor_member_id, p.creditor_member_id),
-      coalesce(t.cents, 0) - coalesce(p.cents, 0),
-      m.iso_currency_code,
-      'share',
-      m.external_ref,
-      m.transaction_id,
-      m.memo,
-      m.effective_date,
-      ${args.actorMemberId ?? null}
-    from target_pair t
-    full outer join posted p
-      on p.external_ref = t.external_ref
-     and p.debtor_member_id = t.debtor_member_id
-     and p.creditor_member_id = t.creditor_member_id
-    join ref_meta m
-      on m.external_ref = coalesce(t.external_ref, p.external_ref)
-    where coalesce(t.cents, 0) - coalesce(p.cents, 0) <> 0
-  `);
+  await tx.insert(LedgerEntries).values(entries);
 };
 
 /**
- * Serializes ledger writes for one household.
+ * Negates every entry posted for one expense version, linking each reversal to
+ * the row it undoes.
  *
- * `postShareDeltas` is read-then-append and Drizzle runs at READ COMMITTED, so
- * two concurrent callers would both read "nothing posted" and both insert the
- * full amount. Two live paths reach it simultaneously today: pull-to-refresh
- * runs `syncItemTransactions` inline while a SYNC_UPDATES_AVAILABLE webhook can
- * run the same item on the pg-boss worker, and pg-boss's `singletonKey` only
- * dedupes *queued* jobs, not the inline path.
+ * One statement, deliberately: read-then-insert would let two callers reverse
+ * the same version twice, and the whole point of an append-only ledger is that
+ * there is no way back from that. The `not exists` skips anything already
+ * reversed, and `ledger_entries_reverses_unique` turns a race that slipped past
+ * it into an error instead of a doubled balance.
  *
- * Household-level rather than per-ref: one call covers a whole sync batch, and
- * write volume here is tiny.
+ * The negation of a zero-sum set is a zero-sum set, so the event still sums to
+ * zero — and that is checked against what was written rather than assumed.
  */
-export const lockHousehold = (tx: Tx, householdId: string) =>
-  tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${householdId}, 0))`,
+export const reverseExpenseVersion = async (
+  tx: Tx,
+  args: { groupId: string; expenseId: string; version: number },
+) =>
+  reverse(tx, {
+    groupId: args.groupId,
+    sourceType: "expense",
+    sourceId: args.expenseId,
+    sourceVersion: args.version,
+    context: `expense ${args.expenseId} v${args.version}`,
+  });
+
+/**
+ * Records a repayment. Bob pays Alice $25: Bob `+2500`, Alice `-2500`.
+ *
+ * Reads oddly until the sign convention is in hand — positive means the group
+ * owes you. Bob owed, so paying moves him *up* toward zero; Alice was owed, so
+ * being paid moves her *down* toward zero.
+ */
+export const postSettlement = async (
+  tx: Tx,
+  args: {
+    groupId: string;
+    settlementId: string;
+    fromMemberId: string;
+    toMemberId: string;
+    amountCents: number;
+  },
+) => {
+  const common = {
+    entryType: "settlement" as const,
+    groupId: args.groupId,
+    sourceId: args.settlementId,
+    sourceType: "settlement" as const,
+  };
+
+  const entries: PendingEntry[] = [
+    { ...common, amountCents: args.amountCents, memberId: args.fromMemberId },
+    { ...common, amountCents: -args.amountCents, memberId: args.toMemberId },
+  ];
+
+  assertZeroSum(entries, `settlement ${args.settlementId}`);
+
+  await tx.insert(LedgerEntries).values(entries);
+};
+
+export const reverseSettlement = (
+  tx: Tx,
+  args: { groupId: string; settlementId: string },
+) =>
+  reverse(tx, {
+    groupId: args.groupId,
+    sourceType: "settlement",
+    sourceId: args.settlementId,
+    sourceVersion: 1,
+    context: `settlement ${args.settlementId}`,
+  });
+
+const reverse = async (
+  tx: Tx,
+  args: {
+    groupId: string;
+    sourceType: "expense" | "settlement";
+    sourceId: string;
+    sourceVersion: number;
+    context: string;
+  },
+) => {
+  const reversed = await tx.execute<{ amount_cents: string }>(sql`
+    insert into ledger_entries (
+      group_id, member_id, amount_cents, entry_type,
+      source_type, source_id, source_version, reverses_id
+    )
+    select e.group_id, e.member_id, -e.amount_cents, e.entry_type,
+           e.source_type, e.source_id, e.source_version, e.id
+    from ledger_entries e
+    where e.group_id = ${args.groupId}
+      and e.source_type = ${args.sourceType}
+      and e.source_id = ${args.sourceId}
+      and e.source_version = ${args.sourceVersion}
+      -- Never reverse a reversal, and never reverse the same entry twice.
+      and e.reverses_id is null
+      and not exists (
+        select 1 from ledger_entries r where r.reverses_id = e.id
+      )
+    returning amount_cents::text
+  `);
+
+  // `bigint` arrives from node-postgres as a string, never a number.
+  const total = reversed.rows.reduce(
+    (sum, row) => sum + Number(row.amount_cents),
+    0,
   );
+
+  if (total !== 0) {
+    throw new Error(
+      `reversal does not sum to zero (${args.context}): ${total}`,
+    );
+  }
+
+  return reversed.rows.length;
+};
+
+/**
+ * Every member's net position. This is the whole balance feature.
+ *
+ * Derived on every read, never stored — there is no "since last settlement"
+ * window and no period close, because a settlement is simply more entries.
+ * Removed seats are included: they can still be owed, and a balance that hid
+ * them would not add up.
+ */
+export const listGroupBalances = async (
+  groupId: string,
+  executor: Executor = db,
+): Promise<(Balance & { displayName: string; status: string })[]> => {
+  const rows = await executor.execute<{
+    member_id: string;
+    display_name: string;
+    status: string;
+    net_cents: string;
+  }>(sql`
+    select gm.id                                as member_id,
+           gm.display_name                      as display_name,
+           gm.status::text                      as status,
+           coalesce(sum(le.amount_cents), 0)::text as net_cents
+    from group_members gm
+    left join ledger_entries le
+      on le.member_id = gm.id and le.group_id = gm.group_id
+    where gm.group_id = ${groupId}
+    group by gm.id, gm.display_name, gm.status, gm.created_at
+    order by coalesce(sum(le.amount_cents), 0) desc, gm.created_at asc
+  `);
+
+  return rows.rows.map((row) => ({
+    displayName: row.display_name,
+    memberId: row.member_id,
+    netCents: Number(row.net_cents),
+    status: row.status,
+  }));
+};
+
+/**
+ * The canary: the signed total across a whole group, which is `0` at every
+ * moment for every group that has ever existed.
+ *
+ * Anything else means a logical event was posted without its counterpart, and
+ * it is the only symptom that shows up before somebody's balance is quietly
+ * wrong. Cheap enough to run on every write and in every test.
+ */
+export const getGroupImbalance = async (
+  groupId: string,
+  executor: Executor = db,
+) => {
+  const rows = await executor.execute<{ imbalance: string }>(sql`
+    select coalesce(sum(amount_cents), 0)::text as imbalance
+    from ledger_entries
+    where group_id = ${groupId}
+  `);
+
+  return Number(rows.rows[0]?.imbalance ?? 0);
+};
+
+/** The same check, as the last thing a write transaction does before it commits. */
+export const assertGroupIntegrity = async (tx: Tx, groupId: string) => {
+  const imbalance = await getGroupImbalance(groupId, tx);
+
+  if (imbalance !== 0) {
+    throw new Error(
+      `group ${groupId} ledger does not sum to zero: ${imbalance}`,
+    );
+  }
+};
 
 /**
  * The insurance an append-only projection otherwise lacks.
  *
- * `ledger_entries` is only correct if no `postShareDeltas` call was ever
- * missed. This recomputes the target from the splits themselves and reports
- * every ref where the posted entries disagree, which turns "permanently and
- * undetectably wrong" into "detectable, and one call away from converging".
+ * `ledger_entries` is only correct if no post or reversal was ever missed.
+ * `assertGroupIntegrity` catches a *lopsided* event; this catches an event that
+ * was skipped or double-posted symmetrically, which sums to zero and is
+ * therefore invisible to it.
  *
- * Every disagreeing ref is reported. `detached` says which kind it is:
- *
- *   detached: false — the transaction is still here and its entries do not
- *     match its splits. This is the bug class the check exists for.
- *   detached: true  — the transaction row is gone, so there are no splits to
- *     recompute a target from and it reads as 0. A purge retains the entries on
- *     purpose ("deleting your data must not delete what you owe"), so these are
- *     expected — but a Plaid `removed` whose reversal never ran looks identical,
- *     so they are labelled rather than filtered out.
- *
- * Read-only, and milliseconds at this scale. Run it in tests and expose it to
- * the household owner.
+ * Recomputes each member's position from the documents themselves — the current
+ * version of every live expense, plus every settlement that has not been voided
+ * — and reports whoever disagrees. Read-only, and milliseconds at this scale:
+ * run it in tests, expose it to the group owner, and put it on a nightly job.
  */
 export const verifyLedger = async (
-  householdId: string,
+  groupId: string,
   /**
-   * Defaults to a fresh connection because the procedure that exposes this is
-   * a plain query. Pass a transaction handle to check work that has not been
-   * committed yet — otherwise this reads the pre-transaction state and reports
-   * no drift, which reads exactly like success.
+   * Defaults to a fresh connection because the procedure exposing this is a
+   * plain query. Pass a transaction handle to check work that has not committed
+   * yet — otherwise this reads the pre-transaction state and reports no drift,
+   * which reads exactly like success.
    */
-  executor: Pick<typeof db, "execute"> | Tx = db,
+  executor: Executor = db,
 ) => {
   const rows = await executor.execute<{
-    external_ref: string;
-    debtor_member_id: string;
-    creditor_member_id: string;
+    member_id: string;
     target_cents: string;
     posted_cents: string;
-    detached: boolean;
   }>(sql`
-    with target as (
-      select 'plaid:' || t.plaid_transaction_id as external_ref,
-             s.member_id as debtor_member_id,
-             t.creditor_member_id as creditor_member_id,
-             sum(s.amount_cents)::bigint as cents
-      from transaction_splits s
-      join transactions t on t.id = s.transaction_id
-      where t.household_id = ${householdId}
-        and s.member_id <> t.creditor_member_id
-      group by 1, 2, 3
+    with live_version as (
+      select ev.id, ev.expense_id
+      from expense_versions ev
+      join expenses e
+        on e.id = ev.expense_id
+       and e.current_version = ev.version
+       and e.deleted_at is null
+      where e.group_id = ${groupId}
+    ),
+    contribution as (
+      select p.member_id, sum(p.amount_cents)::bigint as cents
+      from expense_payers p
+      join live_version v on v.id = p.expense_version_id
+      group by 1
+      union all
+      select s.member_id, -sum(s.amount_cents)::bigint
+      from expense_shares s
+      join live_version v on v.id = s.expense_version_id
+      group by 1
+      union all
+      select from_member_id, sum(amount_cents)::bigint
+      from settlements
+      where group_id = ${groupId} and voided_at is null
+      group by 1
+      union all
+      select to_member_id, -sum(amount_cents)::bigint
+      from settlements
+      where group_id = ${groupId} and voided_at is null
+      group by 1
+    ),
+    target as (
+      select member_id, sum(cents)::bigint as cents from contribution group by 1
     ),
     posted as (
-      select external_ref, debtor_member_id, creditor_member_id,
-             sum(amount_cents)::bigint as cents
+      select member_id, sum(amount_cents)::bigint as cents
       from ledger_entries
-      where household_id = ${householdId} and kind = 'share'
-      group by 1, 2, 3
-    ),
-    -- Every ref this household still has a transaction row for.
-    -- plaid_transaction_id is unique, so this cannot duplicate a joined row.
-    live as (
-      select 'plaid:' || plaid_transaction_id as external_ref
-      from transactions
-      where household_id = ${householdId}
+      where group_id = ${groupId}
+      group by 1
     )
-    select coalesce(t.external_ref, p.external_ref)             as external_ref,
-           coalesce(t.debtor_member_id, p.debtor_member_id)     as debtor_member_id,
-           coalesce(t.creditor_member_id, p.creditor_member_id) as creditor_member_id,
-           coalesce(t.cents, 0)::text                           as target_cents,
-           coalesce(p.cents, 0)::text                           as posted_cents,
-           (l.external_ref is null)                             as detached
+    select coalesce(t.member_id, p.member_id) as member_id,
+           coalesce(t.cents, 0)::text         as target_cents,
+           coalesce(p.cents, 0)::text         as posted_cents
     from target t
-    full outer join posted p
-      on p.external_ref = t.external_ref
-     and p.debtor_member_id = t.debtor_member_id
-     and p.creditor_member_id = t.creditor_member_id
-    left join live l
-      on l.external_ref = coalesce(t.external_ref, p.external_ref)
+    full outer join posted p on p.member_id = t.member_id
     where coalesce(t.cents, 0) <> coalesce(p.cents, 0)
   `);
 
-  // `sum(bigint)` comes back from node-postgres as a string; casting to text
-  // above makes that explicit rather than a surprise at the call site.
   return rows.rows.map((row) => ({
-    externalRef: row.external_ref,
-    debtorMemberId: row.debtor_member_id,
-    creditorMemberId: row.creditor_member_id,
-    targetCents: Number(row.target_cents),
+    memberId: row.member_id,
     postedCents: Number(row.posted_cents),
-    detached: row.detached,
+    targetCents: Number(row.target_cents),
   }));
 };

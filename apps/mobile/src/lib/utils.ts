@@ -10,8 +10,9 @@ const LOCALE = "en-US";
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
 
 /**
- * `currency` is nullable throughout the Plaid data, and unofficial codes make
- * `Intl` throw, so both fall back to a plain decimal rather than crashing a row.
+ * `currency` is nullable on anything that predates a group choosing one, and
+ * unofficial codes make `Intl` throw, so both fall back to a plain decimal
+ * rather than crashing a row.
  */
 const buildCurrencyFormatter = (currency?: string | null) => {
   try {

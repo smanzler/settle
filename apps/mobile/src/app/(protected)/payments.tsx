@@ -1,1 +1,1 @@
-export { Payments as default } from "@/features/household/screens/payments";
+export { Payments as default } from "@/features/group/screens/payments";

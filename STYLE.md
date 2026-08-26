@@ -71,11 +71,11 @@ const isMobile = (d: Delivery): d is MobileDelivery => d.channel === "mobile";
 deliveries.filter(isMobile).map((delivery) => ...);
 ```
 
-**Exhaustive switch/ternary.** Switch on the discriminant of a union with no `default` branch, and give the function an explicit return type — `noFallthroughCasesInSwitch` plus the return type make an unhandled variant a type error. `renderNotification` in `packages/api/src/lib/notify.ts` is the reference; when a new payload variant lands in `packages/shared/src/notify.ts`, that switch is what fails first.
+**Exhaustive switch/ternary.** Switch on the discriminant of a union with no `default` branch, and give the function an explicit return type — `noFallthroughCasesInSwitch` plus the return type make an unhandled variant a type error. `renderNotification` in `packages/api/src/lib/notify.ts` and `buildShares` in `packages/shared/src/expense.ts` are the references; when a new payload variant lands in `packages/shared/src/notify.ts`, that switch is what fails first.
 
 **tRPC procedures.** Take the single `opts` argument and destructure it on the first lines of the body — `const { user } = opts.ctx;` then `const { input } = opts.input;`. Validate input with zod inline. Use `protectedProcedure` unless the endpoint is genuinely public.
 
-**Ownership checks in the procedure.** Every query and mutation scopes by `user.id` (`eq(Notifications.userId, user.id)`, `key.startsWith(\`uploads/${user.id}/\`)`). Never trust an id from the client to identify a row on its own.
+**Ownership checks in the procedure.** Every query and mutation scopes by `user.id` (`eq(Notifications.userId, user.id)`, `eq(Expenses.groupId, ctx.groupId)`). Never trust an id from the client to identify a row on its own.
 
 ## Naming
 
@@ -110,10 +110,10 @@ deliveries.filter(isMobile).map((delivery) => ...);
 | `Client`   | Object whose properties are functions that call an API (`authClient`)       |
 | `Context`  | Object whose properties are references to shared data used across functions |
 | `Provider` | React context provider component                                            |
-| `Router`   | tRPC router (`filesRouter`, `notificationsRouter`)                          |
+| `Router`   | tRPC router (`expensesRouter`, `notificationsRouter`)                       |
 | `Schema`   | Zod schema; its inferred type is exported under the bare name               |
 
-**Drizzle tables** are exported as PascalCase plurals (`Notifications`, `PushTokens`) with snake_case column names in the SQL; pg enums stay camelCase (`channelEnum`).
+**Drizzle tables** are exported as PascalCase plurals (`Expenses`, `LedgerEntries`) with snake_case column names in the SQL; pg enums stay camelCase (`channelEnum`).
 
 **No Hungarian notation.** Don't suffix types with `Type` or values with their type name. VSCode already communicates symbol kinds. `Schema` above is a deliberate exception — it distinguishes the runtime validator from the type it infers. Other exceptions — use these specific shorthands only:
 
@@ -128,7 +128,7 @@ for (let iArray = 0; ...) { ... }  // array index variable
 Comments split by _what_/_how_/_why_, each in a different form. Keep every form concise — a comment that repeats what the code already shows is worse than no comment.
 
 - **What.** A symbol's name should say what it does or is for. Don't add a comment restating the name (`// gets the user` above `getUser`) — rename the symbol instead if it needs explaining.
-- **How.** Use JSDoc/TSDoc (`/** ... */`) on exported symbols to describe how to use them: parameters, return value, preconditions, thrown errors. Reserve it for things a call site can't infer from the signature — a multi-step protocol like `filesRouter`'s upload flow, or an extension point like the notification payload union.
+- **How.** Use JSDoc/TSDoc (`/** ... */`) on exported symbols to describe how to use them: parameters, return value, preconditions, thrown errors. Reserve it for things a call site can't infer from the signature — a multi-step protocol like `reviseExpense`'s reverse-then-post, or an extension point like the notification payload union.
 - **Why.** Use inline `//` comments to explain why a non-obvious choice was made — a workaround, a constraint from another system, a tradeoff. Don't use them to narrate what the next line does.
 
 ```ts

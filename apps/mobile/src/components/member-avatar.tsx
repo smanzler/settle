@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Text } from "@/components/ui/text";
-import { formatMemberInitials } from "@/features/transactions/lib/format";
+import { formatMemberInitials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** A member's face — initials until there is a picture to show. */

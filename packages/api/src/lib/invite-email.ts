@@ -25,12 +25,12 @@ const JOIN_LINK_PREFIX = "com.sigh10.budget://join/";
  * mail client, and the code typed by hand is the fallback that still works.
  */
 export const renderInviteEmail = ({
-  householdName,
+  groupName,
   invitedByName,
   code,
   expiresInDays,
 }: {
-  householdName: string;
+  groupName: string;
   invitedByName: string;
   code: string;
   expiresInDays: number;
@@ -56,7 +56,7 @@ export const renderInviteEmail = ({
               <td style="padding:16px 32px 0 32px;text-align:center;">
                 <h1 style="margin:0;font-size:20px;line-height:28px;font-weight:600;color:#09090b;">${heading}</h1>
                 <p style="margin:8px 0 0 0;font-size:14px;line-height:20px;color:#71717a;">
-                  You've been added to ${householdName}. Open Budget on your phone and this invite will be waiting for you — or enter the code below.
+                  You've been added to ${groupName}. Open Budget on your phone and this invite will be waiting for you — or enter the code below.
                 </p>
               </td>
             </tr>
@@ -93,7 +93,7 @@ export const renderInviteEmail = ({
 
   const text = `${heading}
 
-You've been added to ${householdName} on Budget.
+You've been added to ${groupName} on Budget.
 
 Your invite code is ${code}
 

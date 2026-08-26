@@ -29,7 +29,7 @@ pnpm monorepo — Expo mobile app (`apps/mobile`), TanStack Start web app (`apps
 - Give `test` a file path to run one test file. This works in every workspace:
 
   ```sh
-  pnpm --filter @budget/api test src/lib/splits.test.ts
+  pnpm --filter @budget/api test src/lib/settle-up.test.ts
   pnpm --filter @budget/mobile test src/lib/money.test.ts
   ```
 

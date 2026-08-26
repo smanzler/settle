@@ -2,61 +2,137 @@ import { defineRelations } from "drizzle-orm";
 import * as schema from "./schema";
 
 export const relations = defineRelations(schema, (r) => ({
-  Households: {
+  Groups: {
     createdBy: r.one.users({
-      from: r.Households.createdByUserId,
+      from: r.Groups.createdByUserId,
       to: r.users.id,
     }),
-    members: r.many.HouseholdMembers({
-      from: r.Households.id,
-      to: r.HouseholdMembers.householdId,
+    members: r.many.GroupMembers({
+      from: r.Groups.id,
+      to: r.GroupMembers.groupId,
     }),
-    invites: r.many.HouseholdInvites({
-      from: r.Households.id,
-      to: r.HouseholdInvites.householdId,
+    invites: r.many.GroupInvites({
+      from: r.Groups.id,
+      to: r.GroupInvites.groupId,
     }),
-    bankAccounts: r.many.BankAccounts({
-      from: r.Households.id,
-      to: r.BankAccounts.householdId,
-    }),
-    transactions: r.many.Transactions({
-      from: r.Households.id,
-      to: r.Transactions.householdId,
+    expenses: r.many.Expenses({
+      from: r.Groups.id,
+      to: r.Expenses.groupId,
     }),
   },
-  UserHouseholdPrefs: {
+  UserGroupPrefs: {
     user: r.one.users({
-      from: r.UserHouseholdPrefs.userId,
+      from: r.UserGroupPrefs.userId,
       to: r.users.id,
     }),
-    activeHousehold: r.one.Households({
-      from: r.UserHouseholdPrefs.activeHouseholdId,
-      to: r.Households.id,
+    activeGroup: r.one.Groups({
+      from: r.UserGroupPrefs.activeGroupId,
+      to: r.Groups.id,
     }),
   },
-  HouseholdMembers: {
-    household: r.one.Households({
-      from: r.HouseholdMembers.householdId,
-      to: r.Households.id,
+  GroupMembers: {
+    group: r.one.Groups({
+      from: r.GroupMembers.groupId,
+      to: r.Groups.id,
     }),
     /** Null until the seat's invite is accepted. */
     user: r.one.users({
-      from: r.HouseholdMembers.userId,
+      from: r.GroupMembers.userId,
       to: r.users.id,
     }),
   },
-  HouseholdInvites: {
-    household: r.one.Households({
-      from: r.HouseholdInvites.householdId,
-      to: r.Households.id,
+  GroupInvites: {
+    group: r.one.Groups({
+      from: r.GroupInvites.groupId,
+      to: r.Groups.id,
     }),
-    member: r.one.HouseholdMembers({
-      from: r.HouseholdInvites.memberId,
-      to: r.HouseholdMembers.id,
+    member: r.one.GroupMembers({
+      from: r.GroupInvites.memberId,
+      to: r.GroupMembers.id,
     }),
-    invitedBy: r.one.HouseholdMembers({
-      from: r.HouseholdInvites.invitedByMemberId,
-      to: r.HouseholdMembers.id,
+    invitedBy: r.one.GroupMembers({
+      from: r.GroupInvites.invitedByMemberId,
+      to: r.GroupMembers.id,
+    }),
+  },
+  Expenses: {
+    group: r.one.Groups({
+      from: r.Expenses.groupId,
+      to: r.Groups.id,
+    }),
+    createdBy: r.one.GroupMembers({
+      from: r.Expenses.createdByMemberId,
+      to: r.GroupMembers.id,
+    }),
+    versions: r.many.ExpenseVersions({
+      from: r.Expenses.id,
+      to: r.ExpenseVersions.expenseId,
+    }),
+  },
+  ExpenseVersions: {
+    expense: r.one.Expenses({
+      from: r.ExpenseVersions.expenseId,
+      to: r.Expenses.id,
+    }),
+    createdBy: r.one.GroupMembers({
+      from: r.ExpenseVersions.createdByMemberId,
+      to: r.GroupMembers.id,
+    }),
+    payers: r.many.ExpensePayers({
+      from: r.ExpenseVersions.id,
+      to: r.ExpensePayers.expenseVersionId,
+    }),
+    shares: r.many.ExpenseShares({
+      from: r.ExpenseVersions.id,
+      to: r.ExpenseShares.expenseVersionId,
+    }),
+  },
+  ExpensePayers: {
+    version: r.one.ExpenseVersions({
+      from: r.ExpensePayers.expenseVersionId,
+      to: r.ExpenseVersions.id,
+    }),
+    member: r.one.GroupMembers({
+      from: r.ExpensePayers.memberId,
+      to: r.GroupMembers.id,
+    }),
+  },
+  ExpenseShares: {
+    version: r.one.ExpenseVersions({
+      from: r.ExpenseShares.expenseVersionId,
+      to: r.ExpenseVersions.id,
+    }),
+    member: r.one.GroupMembers({
+      from: r.ExpenseShares.memberId,
+      to: r.GroupMembers.id,
+    }),
+  },
+  Settlements: {
+    group: r.one.Groups({
+      from: r.Settlements.groupId,
+      to: r.Groups.id,
+    }),
+    from: r.one.GroupMembers({
+      from: r.Settlements.fromMemberId,
+      to: r.GroupMembers.id,
+    }),
+    to: r.one.GroupMembers({
+      from: r.Settlements.toMemberId,
+      to: r.GroupMembers.id,
+    }),
+    createdBy: r.one.GroupMembers({
+      from: r.Settlements.createdByMemberId,
+      to: r.GroupMembers.id,
+    }),
+  },
+  LedgerEntries: {
+    group: r.one.Groups({
+      from: r.LedgerEntries.groupId,
+      to: r.Groups.id,
+    }),
+    member: r.one.GroupMembers({
+      from: r.LedgerEntries.memberId,
+      to: r.GroupMembers.id,
     }),
   },
   Notifications: {
@@ -79,114 +155,6 @@ export const relations = defineRelations(schema, (r) => ({
     user: r.one.users({
       from: r.PushTokens.userId,
       to: r.users.id,
-    }),
-  },
-  PlaidItems: {
-    household: r.one.Households({
-      from: r.PlaidItems.householdId,
-      to: r.Households.id,
-    }),
-    /** The credential holder, not the creditor. */
-    user: r.one.users({
-      from: r.PlaidItems.userId,
-      to: r.users.id,
-    }),
-    owner: r.one.HouseholdMembers({
-      from: r.PlaidItems.ownerMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    accounts: r.many.BankAccounts({
-      from: r.PlaidItems.id,
-      to: r.BankAccounts.plaidItemId,
-    }),
-  },
-  BankAccounts: {
-    household: r.one.Households({
-      from: r.BankAccounts.householdId,
-      to: r.Households.id,
-    }),
-    owner: r.one.HouseholdMembers({
-      from: r.BankAccounts.ownerMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    plaidItem: r.one.PlaidItems({
-      from: r.BankAccounts.plaidItemId,
-      to: r.PlaidItems.id,
-    }),
-    transactions: r.many.Transactions({
-      from: r.BankAccounts.id,
-      to: r.Transactions.bankAccountId,
-    }),
-  },
-  Transactions: {
-    household: r.one.Households({
-      from: r.Transactions.householdId,
-      to: r.Households.id,
-    }),
-    creditor: r.one.HouseholdMembers({
-      from: r.Transactions.creditorMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    bankAccount: r.one.BankAccounts({
-      from: r.Transactions.bankAccountId,
-      to: r.BankAccounts.id,
-    }),
-    splits: r.many.TransactionSplits({
-      from: r.Transactions.id,
-      to: r.TransactionSplits.transactionId,
-    }),
-  },
-  TransactionSplits: {
-    transaction: r.one.Transactions({
-      from: r.TransactionSplits.transactionId,
-      to: r.Transactions.id,
-    }),
-    member: r.one.HouseholdMembers({
-      from: r.TransactionSplits.memberId,
-      to: r.HouseholdMembers.id,
-    }),
-  },
-  Settlements: {
-    household: r.one.Households({
-      from: r.Settlements.householdId,
-      to: r.Households.id,
-    }),
-    from: r.one.HouseholdMembers({
-      from: r.Settlements.fromMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    to: r.one.HouseholdMembers({
-      from: r.Settlements.toMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-  },
-  LedgerEntries: {
-    household: r.one.Households({
-      from: r.LedgerEntries.householdId,
-      to: r.Households.id,
-    }),
-    debtor: r.one.HouseholdMembers({
-      from: r.LedgerEntries.debtorMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    creditor: r.one.HouseholdMembers({
-      from: r.LedgerEntries.creditorMemberId,
-      to: r.HouseholdMembers.id,
-    }),
-    /** Null once Plaid removed the row, or the item was purged. */
-    transaction: r.one.Transactions({
-      from: r.LedgerEntries.transactionId,
-      to: r.Transactions.id,
-    }),
-    settlement: r.one.Settlements({
-      from: r.LedgerEntries.settlementId,
-      to: r.Settlements.id,
-    }),
-  },
-  SplitIntents: {
-    household: r.one.Households({
-      from: r.SplitIntents.householdId,
-      to: r.Households.id,
     }),
   },
 }));

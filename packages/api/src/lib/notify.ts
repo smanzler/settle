@@ -17,11 +17,6 @@ const renderNotification = (
   switch (payload.type) {
     case "system_message":
       return { title: "Budget", body: payload.data.message };
-    case "bank_login_required":
-      return {
-        title: payload.data.institutionName ?? "Bank connection expired",
-        body: "Reconnect to keep your transactions up to date.",
-      };
     case "settlement_recorded":
       return {
         title: "Payment recorded",
@@ -46,7 +41,7 @@ const renderNotification = (
  *
  * The code rather than a symbol: this string is frozen into `notifications.body`
  * at write time, so it has to be unambiguous years later and in whatever
- * currency the household chose, and a bare `$` is neither.
+ * currency the group chose, and a bare `$` is neither.
  */
 const formatMoney = (cents: number, currency: string) =>
   `${currency} ${fromCents(Math.abs(cents))}`;

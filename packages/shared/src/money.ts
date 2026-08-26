@@ -2,19 +2,19 @@
  * Integer-cent money, shared by the API and the clients.
  *
  * Lives in `shared` rather than `api` on purpose: the split editor previews the
- * exact cents the server will store, so the preview and the optimistic cache
- * update are byte-identical to the write. A second, subtly different rounding
- * implementation on the client is how a UI ends up disagreeing with its own
- * database.
+ * exact cents the server will store, so the preview and the write are
+ * byte-identical. A second, subtly different rounding implementation on the
+ * client is how a UI ends up disagreeing with its own database.
  */
 
-/** A member's slice of a transaction, expressed as a weight rather than cents. */
+/** A member's slice of an expense, expressed as a weight rather than cents. */
 export type AllocationPart = {
   memberId: string;
   /**
    * Relative share. Equal split = all 1s; percentages = weights out of 100.
-   * Bounded at 1000 (mirrored by a DB CHECK) so `total * weight` cannot leave
-   * the safe integer range — 1e12 cents × 1000 = 1e15 < 2^53.
+   * Never stored: the database holds the cents these resolve to, not the weights
+   * themselves, so this only has to survive the arithmetic below. Bounded at 1000
+   * so `total * weight` cannot leave the safe integer range: 1e12 × 1000 = 1e15.
    */
   weight: number;
 };
@@ -22,27 +22,11 @@ export type AllocationPart = {
 export const MAX_WEIGHT = 1000;
 
 /**
- * `numeric` arrives from Drizzle as a **string**, and `Number("10.07") * 100` is
- * 1006.9999999999999. Parse the decimal by hand instead of touching a float.
+ * `4000` → `"40.00"`.
  *
- * Accepts both `"20"` and `"20.00"`: the column round-trips two decimals, but
- * `plaid-sync` writes `String(t.amount)`, which drops them on whole dollars.
+ * Base-ten string assembly by integer arithmetic, never `cents / 100`: the only
+ * place a rendered figure could disagree with the ledger that produced it.
  */
-export const toCents = (value: string): number => {
-  const match = /^\s*(-?)(\d+)(?:\.(\d{1,2}))?\s*$/.exec(value);
-
-  if (!match) throw new Error(`not a numeric(12,2): ${JSON.stringify(value)}`);
-
-  const [, sign, whole = "", fraction = ""] = match;
-  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-
-  // `-0` would compare unequal to `0` under Object.is and read as "-0.00".
-  if (cents === 0) return 0;
-
-  return sign === "-" ? -cents : cents;
-};
-
-/** Back to the `numeric(12,2)` string Postgres expects. */
 export const fromCents = (cents: number): string => {
   if (!Number.isSafeInteger(cents)) {
     throw new Error(`not an integer cent amount: ${cents}`);
@@ -66,13 +50,13 @@ export const fromCents = (cents: number): string => {
  * 2. **Sign-symmetric** — allocates on the *magnitude* and re-applies the sign,
  *    so `allocate(-t, w)` is `allocate(t, w)` negated elementwise. Flooring a
  *    negative directly would hand the odd cent to a different member than the
- *    positive case, and a full refund would settle to a stray cent instead of
- *    to zero.
+ *    positive case. Nothing posts a negative amount today, and the symmetry is
+ *    what keeps that from becoming a rounding bug the day something does.
  * 3. **Stable** — ties break on `memberId` ascending, using `<` rather than
  *    `localeCompare` (which is locale- and ICU-dependent, so it can differ
  *    between the phone and the server). Deliberately *not* a per-transaction
- *    seed: a refund is a different transaction, so a seeded tiebreak would send
- *    the odd cent elsewhere and strand ±$0.01 between two people forever.
+ *    seed: a revision is a fresh allocation, so a seeded tiebreak would send the
+ *    odd cent elsewhere on every edit and strand ±$0.01 between two people.
  *
  * The accepted cost of (3) is that on an even split the lowest uuid always eats
  * the extra cent. Rotating it for fairness would cost exactness, which is not a
@@ -133,6 +117,6 @@ export const allocate = (
   return allocated;
 };
 
-/** An equal split — the shape `defaultSplit: "equal"` and the editor both use. */
+/** An equal split — the shape the editor and `buildShares` both use. */
 export const equalParts = (memberIds: readonly string[]): AllocationPart[] =>
   memberIds.map((memberId) => ({ memberId, weight: 1 }));
