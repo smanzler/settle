@@ -8,7 +8,7 @@ services:
       - ./.local/db-data/:/var/lib/postgresql/data/
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "25432:5432"
     networks:
       - postgres-network
     healthcheck:
@@ -20,7 +20,7 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     ports:
-      - 15433:80
+      - 25433:80
     env_file:
       - .env
     depends_on:
@@ -34,8 +34,8 @@ services:
   mailpit:
     image: axllent/mailpit
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "21025:1025"
+      - "28025:8025"
 
 networks:
   postgres-network:

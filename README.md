@@ -24,7 +24,8 @@ pnpm --filter @budget/api exec drizzle-kit migrate
 pnpm dev                                      # everything, in tmux panes
 ```
 
-Sign-in codes go to Mailpit at http://localhost:8025.
+Sign-in codes go to Mailpit at http://localhost:28025, and pgAdmin is at
+http://localhost:25433.
 
 ## The domain
 
@@ -136,7 +137,7 @@ The ledger and scope suites need a live Postgres with the migrations applied,
 which CI does not have, so they are opt-in and skip themselves otherwise:
 
 ```sh
-INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:5432/budget \
+INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:25432/budget \
   pnpm --filter @budget/api test
 ```
 

@@ -18,7 +18,7 @@ import {
  * live Postgres with the migrations applied, which CI does not have, so they are
  * opt-in:
  *
- *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:5432/budget pnpm --filter @budget/api test
+ *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:25432/budget pnpm --filter @budget/api test
  *
  * Every group they create is dropped in `afterAll`, so a development database is
  * a safe target.

@@ -10,7 +10,7 @@ const testEnv: Record<keyof Env, string> = {
   // otherwise it stays a stub that nothing connects to and they skip themselves.
   DATABASE_URL:
     process.env.INTEGRATION_DATABASE_URL ??
-    "postgres://test:test@localhost:5432/test",
+    "postgres://test:test@localhost:25432/test",
   PORT: "4000",
   CLIENT_ORIGIN: "http://localhost:3000",
 

@@ -15,7 +15,7 @@ import { appRouter } from "./index";
  * the thing under test is whether a `WHERE` clause is actually present in the
  * SQL — so it is opt-in on a live database:
  *
- *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:5432/budget pnpm --filter @budget/api test
+ *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:25432/budget pnpm --filter @budget/api test
  *
  * Unlike a pure unit suite these cannot run inside a rolled-back transaction:
  * `createCaller` goes through the module-level `db`, which would not see

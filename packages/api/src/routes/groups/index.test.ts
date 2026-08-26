@@ -13,7 +13,7 @@ import { appRouter } from "../index";
  * index, an advisory lock, and a guard that has to count seats nobody has
  * claimed yet.
  *
- *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:5432/budget pnpm --filter @budget/api test
+ *   INTEGRATION_DATABASE_URL=postgresql://budget:budget@localhost:25432/budget pnpm --filter @budget/api test
  */
 const enabled = Boolean(process.env.INTEGRATION_DATABASE_URL);
 const describeDb = enabled ? describe : describe.skip;
