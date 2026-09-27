@@ -56,9 +56,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
 
       # Vercel's CLI reads repo metadata to tag the deployment; stripping it
       # keeps the build from picking up commit/branch info that can be stale
@@ -68,20 +65,10 @@ jobs:
 
       - run: pnpm add -g vercel
 
-      - name: Pull Vercel project settings
-        working-directory: apps/web
-        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
-      - name: Build
-        working-directory: apps/web
-        run: vercel build --prod --token="$VERCEL_TOKEN"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
+      # Deploy from the repo root: the project's Root Directory is apps/web,
+      # and Vercel applies it to the uploaded source. The root also carries the
+      # pnpm workspace that @settle/shared resolves through.
       - name: Deploy
-        working-directory: apps/web
-        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+        run: vercel deploy --prod --yes --token="$VERCEL_TOKEN"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
