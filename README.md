@@ -37,7 +37,9 @@ docker/         Local Postgres, pgAdmin and Mailpit
 4. Create the first migration, then apply it:
    `pnpm --filter @settle/api exec drizzle-kit generate` and
    `pnpm --filter @settle/api exec drizzle-kit migrate`
-5. `pnpm dev` — runs docker, API, mobile and web in tmux panes
+5. `pnpm dev` — starts docker, API, mobile and web in a detached `settle`
+   tmux session; `pnpm down` stops everything (`pnpm down -- --purge` also
+   wipes the database volumes)
 
 Sign-in codes land in Mailpit at http://localhost:8025.
 
@@ -51,14 +53,20 @@ Things that can't be inherited from the template — do these once per project:
       `app.config.ts`.
 - [ ] **Android push**: add `google-services.json` to `apps/mobile` and
       re-enable `android.googleServicesFile` in `app.config.ts`.
+- [ ] **Web site info**: fill in `apps/web/src/lib/site.ts`, replace the
+      `example.com` URLs in `apps/web/public/robots.txt` and `sitemap.xml`,
+      and write the privacy and terms pages (they ship as TODO outlines).
 - [ ] **Icons**: replace the images in `packages/shared/assets/images` (app
       icon, splash, adaptive icons, favicon, and `icon-email.png` used in the
-      OTP email).
+      OTP email), and regenerate `logo192.png`, `logo512.png` and
+      `apple-touch-icon.png` in `apps/web/public` from the new icon.
 - [ ] **Fly.io**: `app` in `packages/api/fly.toml` must be an app that exists
       (`fly apps create <name>`), then set the `FLY_API_TOKEN` and
       `DATABASE_URL` GitHub secrets.
-- [ ] **Vercel**: set `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
-      GitHub secrets for the web deploy, and `EXPO_TOKEN` for mobile OTA.
+- [ ] **Vercel**: set the project's Root Directory to `apps/web` (the deploy
+      uploads the whole repo so the pnpm workspace resolves), then set
+      `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` GitHub secrets for
+      the web deploy, and `EXPO_TOKEN` for mobile OTA.
 - [ ] **S3**: create a bucket and fill in the `BUCKET_*` env vars. Leave
       `BUCKET_ENDPOINT` unset for AWS itself; any other S3-compatible service
       (and the local mock) needs it.
