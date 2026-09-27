@@ -21,6 +21,9 @@ docker/         Local Postgres, pgAdmin and Mailpit
 - **Push notifications** — `notify()` writes a notification row and queues a
   delivery on pg-boss, which sends it via Expo. The mobile app registers its
   push token on launch.
+- **Onboarding** — a first-launch flow under `app/onboarding` (a
+  notifications step) that runs before sign-in. Add steps with
+  `OnboardingStep` and bump its `STEP_COUNT`.
 - **File uploads** — `user.avatar.createUpload` / `user.avatar.set` hand out
   presigned S3 URLs so clients upload straight to the bucket.
 
@@ -53,6 +56,11 @@ Things that can't be inherited from the template — do these once per project:
       `app.config.ts`.
 - [ ] **Android push**: add `google-services.json` to `apps/mobile` and
       re-enable `android.googleServicesFile` in `app.config.ts`.
+- [ ] **Android release signing**: set `SETTLE_UPLOAD_STORE_FILE`,
+      `SETTLE_UPLOAD_STORE_PASSWORD`, `SETTLE_UPLOAD_KEY_ALIAS` and
+      `SETTLE_UPLOAD_KEY_PASSWORD` in `~/.gradle/gradle.properties` (or as
+      `ORG_GRADLE_PROJECT_*` env vars) for local release builds; see
+      `apps/mobile/plugins/withReleaseSigning.ts`.
 - [ ] **Web site info**: fill in `apps/web/src/lib/site.ts`, replace the
       `example.com` URLs in `apps/web/public/robots.txt` and `sitemap.xml`,
       and write the privacy and terms pages (they ship as TODO outlines).

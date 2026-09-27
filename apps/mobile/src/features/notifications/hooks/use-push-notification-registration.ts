@@ -2,7 +2,6 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
-import { Platform } from "react-native";
 import { useRegisterPushToken } from "./use-register-push-token";
 
 Notifications.setNotificationHandler({
@@ -15,6 +14,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// Onboarding asks for the permission. This hook only sends the token.
 export const usePushNotificationRegistration = () => {
   const registerToken = useRegisterPushToken();
 
@@ -22,23 +22,8 @@ export const usePushNotificationRegistration = () => {
     (async () => {
       if (!Device.isDevice) return;
 
-      if (Platform.OS === "android") {
-        await Notifications.setNotificationChannelAsync("default", {
-          name: "default",
-          importance: Notifications.AndroidImportance.DEFAULT,
-        });
-      }
-
-      const { status: existingStatus } =
-        await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-
-      if (existingStatus !== "granted") {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-
-      if (finalStatus !== "granted") return;
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== "granted") return;
 
       try {
         const projectId = Constants.expoConfig?.extra?.eas?.projectId;

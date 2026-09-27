@@ -8,6 +8,7 @@ import {
 import { BodyScrollView } from "@/components/ui/body-scroll-view";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
+import { useOnboardingStore } from "@/features/onboarding/stores/onboarding-store";
 import { authClient } from "@/lib/auth-client";
 import { AvatarPicker } from "../components/avatar-picker";
 import { EditNameDialog } from "../components/edit-name-dialog";
@@ -15,6 +16,7 @@ import { EditNameDialog } from "../components/edit-name-dialog";
 export function Account() {
   const { data: session } = authClient.useSession();
   const user = session?.user;
+  const resetOnboarding = useOnboardingStore((state) => state.reset);
 
   return (
     <BodyScrollView>
@@ -42,6 +44,11 @@ export function Account() {
       <Button variant="outline" onPress={() => authClient.signOut()}>
         <Text>Sign out</Text>
       </Button>
+      {__DEV__ && (
+        <Button variant="ghost" onPress={resetOnboarding}>
+          <Text>Reset onboarding</Text>
+        </Button>
+      )}
     </BodyScrollView>
   );
 }
