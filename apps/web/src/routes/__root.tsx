@@ -4,6 +4,9 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 
 import favicon from "@settle/shared/assets/images/favicon.png";
 
+import { NotFoundScreen } from "@/features/marketing/screens/not-found-screen";
+import { SITE } from "@/lib/site";
+
 import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -17,11 +20,27 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "Settle",
+        title: `${SITE.name} — ${SITE.tagline}`,
       },
       {
         name: "description",
-        content: "Settle web app.",
+        content: SITE.description,
+      },
+      {
+        property: "og:site_name",
+        content: SITE.name,
+      },
+      {
+        property: "og:type",
+        content: "website",
+      },
+      {
+        property: "og:locale",
+        content: "en_US",
+      },
+      {
+        name: "twitter:card",
+        content: "summary",
       },
     ],
     links: [
@@ -33,14 +52,17 @@ export const Route = createRootRoute({
         rel: "icon",
         href: favicon,
       },
+      {
+        rel: "apple-touch-icon",
+        href: "/apple-touch-icon.png",
+      },
+      {
+        rel: "manifest",
+        href: "/manifest.json",
+      },
     ],
   }),
-  notFoundComponent: () => (
-    <main className="container mx-auto p-4 pt-16">
-      <h1>404</h1>
-      <p>The requested page could not be found.</p>
-    </main>
-  ),
+  notFoundComponent: NotFoundScreen,
   shellComponent: RootDocument,
 });
 

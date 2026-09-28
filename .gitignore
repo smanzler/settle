@@ -5,3 +5,5 @@ node_modules
 dist
 google-services.json
 .s3data
+.vercel
+.DS_Store

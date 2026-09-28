@@ -19,6 +19,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaListener } from "react-native-safe-area-context";
 import { Uniwind, useUniwind } from "uniwind";
 import { QueryProvider } from "@/providers/query-provider";
+import { useOnboardingStore } from "@/features/onboarding/stores/onboarding-store";
 
 const RootLayout = () => {
   const { theme } = useUniwind();
@@ -46,13 +47,17 @@ const RootLayout = () => {
 
 function RootLayoutNav() {
   const { data: session } = authClient.useSession();
+  const onboarded = useOnboardingStore((state) => state.completed);
 
   return (
     <Stack>
-      <Stack.Protected guard={!session}>
+      <Stack.Protected guard={!onboarded}>
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+      </Stack.Protected>
+      <Stack.Protected guard={onboarded && !session}>
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       </Stack.Protected>
-      <Stack.Protected guard={!!session}>
+      <Stack.Protected guard={onboarded && !!session}>
         <Stack.Screen name="(protected)" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>

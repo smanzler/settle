@@ -23,7 +23,6 @@
   },
   "dependencies": {
     "@better-auth/expo": "^1.6.23",
-    "@settle/shared": "workspace:*",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@rn-primitives/avatar": "^1.5.2",
@@ -34,6 +33,7 @@
     "@rn-primitives/select": "^1.5.2",
     "@rn-primitives/separator": "^1.5.2",
     "@rn-primitives/slot": "^1.5.2",
+    "@settle/shared": "workspace:*",
     "@tanstack/react-query": "^5.95.2",
     "@trpc/client": "^11.18.0",
     "@trpc/tanstack-react-query": "^11.18.0",
@@ -56,6 +56,7 @@
     "expo-router": "~57.0.7",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.4",
+    "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.1",
     "expo-web-browser": "~57.0.1",
@@ -75,7 +76,8 @@
     "tailwindcss": "^4.2.2",
     "tailwindcss-animate": "^1.0.7",
     "uniwind": "^1.6.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",

@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
-    "@settle/shared": "workspace:*",
     "@fontsource-variable/geist": "^5.2.9",
+    "@settle/shared": "workspace:*",
     "@tailwindcss/vite": "^4",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
@@ -26,6 +26,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.24.0",
+    "nitro": "3.0.260903-beta",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "shadcn": "^4.13.0",

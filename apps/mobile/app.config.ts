@@ -62,7 +62,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "expo-secure-store",
+    "expo-sqlite",
     "expo-status-bar",
+    "./plugins/withReleaseSigning",
   ],
   experiments: {
     typedRoutes: true,
